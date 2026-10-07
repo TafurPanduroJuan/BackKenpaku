@@ -96,3 +96,7 @@ app.include_router(chat.router)
 app.include_router(claims.router)
 app.include_router(auth.router)
 app.include_router(admin.router)
+
+@app.get("/", include_in_schema=False)
+def root():
+    return {"service": "Kenpaku API", "status": "ok", "docs": "/docs"}
