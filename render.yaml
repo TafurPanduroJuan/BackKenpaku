@@ -29,9 +29,9 @@ services:
       - key: ENV
         value: "production"
       - key: CORS_ORIGINS
-        value: "https://TU-APP.vercel.app,http://localhost:5173"
+        value: "https://front-kenpaku.vercel.app/"
       - key: WHATSAPP_NUMBER
-        value: "51987654321"
+        value: "51999764576"
       - key: STOCK_LOW_THRESHOLD
         value: "10"
       - key: RAG_MAX_DISTANCE
