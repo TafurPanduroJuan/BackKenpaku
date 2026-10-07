@@ -1,15 +1,12 @@
+import math
 from typing import List
-from openai import OpenAI
+
+import httpx
+
 from app.core.config import settings
 
-client: OpenAI = None
-
-
-def get_openai_client() -> OpenAI:
-    global client
-    if client is None and settings.OPENAI_API_KEY:
-        client = OpenAI(api_key=settings.OPENAI_API_KEY)
-    return client
+EMBEDDING_DIMENSIONS = 1536  # Debe coincidir con la columna Vector(1536) de la BD
+GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 
 
 def generate_product_embedding_text(
@@ -20,10 +17,7 @@ def generate_product_embedding_text(
     espesor: str = "",
     ficha_tecnica: str = "",
 ) -> str:
-    """
-    Concatena la información técnica del producto para la generación del embedding.
-    REGLA: NO incluye precio ni stock (cambian con frecuencia).
-    """
+  
     parts = [
         f"Nombre: {nombre}",
         f"Categoría: {categoria}",
@@ -40,25 +34,42 @@ def generate_product_embedding_text(
     return " | ".join(parts)
 
 
-def get_embedding(text: str) -> List[float]:
-    """
-    Genera un vector embedding de 1536 dimensiones usando text-embedding-3-small.
-    En entorno de prueba sin API key, retorna un vector simulado de 1536 dimensiones.
-    """
-    openai_client = get_openai_client()
-    if not openai_client or not settings.OPENAI_API_KEY:
+def _normalize(vector: List[float]) -> List[float]:
+    """Gemini solo entrega vectores normalizados con 3072 dims; con menos hay que normalizar."""
+    norm = math.sqrt(sum(v * v for v in vector))
+    if norm == 0:
+        return vector
+    return [v / norm for v in vector]
+
+
+def get_embedding(text: str, task_type: str = "RETRIEVAL_DOCUMENT") -> List[float]:
+   
+    if not settings.GEMINI_API_KEY:
         # Fallback para pruebas unitarias / entorno sin API Key
         import hashlib
+
         h = int(hashlib.md5(text.encode("utf-8")).hexdigest(), 16)
-        # Vector normalizado simulado de 1536 dimensiones
-        return [((h + i) % 100) / 1000.0 for i in range(1536)]
+        return [((h + i) % 100) / 1000.0 for i in range(EMBEDDING_DIMENSIONS)]
 
     try:
-        response = openai_client.embeddings.create(
-            input=text, model="text-embedding-3-small"
+        model = settings.GEMINI_EMBEDDING_MODEL
+        response = httpx.post(
+            f"{GEMINI_BASE_URL}/models/{model}:embedContent",
+            headers={"x-goog-api-key": settings.GEMINI_API_KEY},
+            json={
+                "model": f"models/{model}",
+                "content": {"parts": [{"text": text}]},
+                "taskType": task_type,
+                "outputDimensionality": EMBEDDING_DIMENSIONS,
+            },
+            timeout=20,
         )
-        return response.data[0].embedding
+        response.raise_for_status()
+        values = response.json()["embedding"]["values"]
+        if len(values) != EMBEDDING_DIMENSIONS:
+            raise ValueError(f"Dimensiones inesperadas: {len(values)}")
+        return _normalize(values)
     except Exception as e:
-        print(f"⚠️ Error generando embedding con OpenAI: {e}")
+        print(f"⚠️ Error generando embedding con Gemini: {e}")
         # Fallback seguro
-        return [0.0] * 1536
+        return [0.0] * EMBEDDING_DIMENSIONS
