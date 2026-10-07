@@ -233,7 +233,7 @@ def seed_database():
         print(f"✅ Se agregaron {created_count} productos nuevos a la base de datos.")
         
         # 3. Embeddings para el asesor IA (solo si hay OPENAI_API_KEY real)
-        if settings.OPENAI_API_KEY:
+        if settings.GEMINI_API_KEY:
             from app.services.embeddings import (
                 generate_product_embedding_text,
                 get_embedding,
@@ -257,7 +257,7 @@ def seed_database():
             db.commit()
             print(f"🧠 Embeddings generados para {len(pendientes)} productos.")
         else:
-            print("ℹ️ Sin OPENAI_API_KEY: ejecuta POST /api/admin/knowledge/reindex luego.")
+            print("ℹ️ Sin GEMINI_API_KEY: ejecuta POST /api/admin/knowledge/reindex luego.")
         print("🎉 Semillado completado con éxito.")
     except Exception as e:
         db.rollback()

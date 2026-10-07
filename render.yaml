@@ -14,8 +14,12 @@ services:
         value: "Comercial Kenpaku S.A.C. API"
       - key: DATABASE_URL
         sync: false
-      - key: OPENAI_API_KEY
+      - key: GEMINI_API_KEY
         sync: false
+      - key: GEMINI_MODEL
+        value: "gemini-2.5-flash"
+      - key: GEMINI_EMBEDDING_MODEL
+        value: "gemini-embedding-001"
       - key: JWT_SECRET
         generateValue: true
       - key: JWT_ALGORITHM
