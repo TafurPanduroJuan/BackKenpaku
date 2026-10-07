@@ -1,0 +1,38 @@
+services:
+  - type: web
+    name: kenpaku-backend
+    env: python
+    region: oregon
+    plan: free
+    buildCommand: "pip install -r requirements.txt && alembic upgrade head && python scripts/seed.py"
+    startCommand: "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: PROJECT_NAME
+        value: "Comercial Kenpaku S.A.C. API"
+      - key: DATABASE_URL
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_ALGORITHM
+        value: "HS256"
+      - key: JWT_EXPIRE_MINUTES
+        value: "120"
+      - key: ENV
+        value: "production"
+      - key: CORS_ORIGINS
+        value: "https://TU-APP.vercel.app,http://localhost:5173"
+      - key: WHATSAPP_NUMBER
+        value: "51987654321"
+      - key: STOCK_LOW_THRESHOLD
+        value: "10"
+      - key: RAG_MAX_DISTANCE
+        value: "0.5"
+      - key: ADMIN_EMAIL
+        value: "admin@kenpaku.pe"
+      - key: ADMIN_PASSWORD
+        sync: false
