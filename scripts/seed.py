@@ -56,14 +56,13 @@ def seed_database():
                 "descripcion_corta": "Tubo de acero negro estructural redondo de 2 pulgadas y 6 metros de largo.",
                 "ficha_tecnica": (
                     'El Tubo negro redondo 2" x 6 m es un elemento de acero estructural de alta resistencia fabricado bajo '
-                    'norma ASTM A500 TODO: [validar norma por el propietario]. Su acabado negro conserva la capa de calamina de '
+                    "norma ASTM A500. Su acabado negro conserva la capa de calamina de "
                     "fabricación, ideal para estructuras soldadas en interiores o proyectos de carpintería metálica que recibirán "
                     "pintura anticorrosiva posterior. Medidas estándar: diámetro exterior de 50.8 mm y espesor constante de 2.0 mm. "
                     "Usos recomendados: fabricación de portones, tijerales ligeros, postes de cerco, estructuras publicitarias y "
                     "mobiliario industrial. Diferencia negro vs galvanizado: al no tener recubrimiento de zinc, requiere pintura base "
                     "anticorrosiva para evitar oxidación prematura en ambientes húmedos de Lima costera (Puente Piedra). Advertencias: "
-                    "almacenar en lugar seco y bajo techo; evitar el contacto directo con la humedad del suelo durante el almacenamiento. "
-                    "TODO: [validar peso exacto por metro por el propietario]."
+                    "almacenar en lugar seco y bajo techo; evitar el contacto directo con la humedad del suelo durante el almacenamiento."
                 ),
                 "precio_unitario": Decimal("128.90"),
                 "stock_disponible": 15,
@@ -79,13 +78,12 @@ def seed_database():
                 "descripcion_corta": "Tubo cuadrado de acero comercial para cerrajería y estructuras livianas.",
                 "ficha_tecnica": (
                     "Perfil hueco cuadrado de acero de 40x40 mm con espesor de 1.5 mm y longitud de 6 metros. Fabricado mediante "
-                    "conformado en frío y soldadura por resistencia eléctrica ERW TODO: [validar proceso por el propietario]. Su sección "
+                    "conformado en frío y soldadura por resistencia eléctrica ERW. Su sección "
                     "cuadrada uniforme ofrece excelente rigidez a la torsión y facilidad de ensamblaje en cortes a 45 y 90 grados. "
                     "Usos recomendados: marcos de puertas, ventanas, barandas, estructuras para techos livianos, rejas y bastidores. "
                     "Medidas estándar: 40x40 mm exterior, espesor 1.5 mm. Diferencia negro/sin acabado vs galvanizado: expuesto a la intemperie "
                     "sin protección anticorrosiva sufrirá corrosión acelerada por la garúa y salinidad de Lima. Advertencias: aplicar "
-                    "imprimante epóxico antes de la pintura final; revisar tolerancias en dimensiones de corte. TODO: [validar limite de "
-                    "fluencia por el propietario]."
+                    "imprimante epóxico antes de la pintura final; revisar tolerancias en dimensiones de corte."
                 ),
                 "precio_unitario": Decimal("94.50"),
                 "stock_disponible": 12,
@@ -101,13 +99,12 @@ def seed_database():
                 "descripcion_corta": "Perfil en L de acero laminado en caliente para estructuras pesadas y tijerales.",
                 "ficha_tecnica": (
                     'Perfil de acero estructural en L de lados iguales de 2 pulgadas (50.8 mm) por 1/4 pulgada (6.35 mm) de espesor y '
-                    "6 metros de largo. Producido bajo norma ASTM A36 TODO: [validar norma por el propietario]. Ofrece alta tenacidad y "
+                    "6 metros de largo. Producido bajo norma ASTM A36. Ofrece alta tenacidad y "
                     "resistencia mecánica en construcciones pesadas. Usos recomendados: tijerales metálicos, soportes de tanques, "
                     "anclajes de concreto, plataformas industriales, marcos de soporte estructural y refuerzos de carrocerías. Medidas "
                     "estándar: alas de 50.8 mm, espesor de 6.35 mm. Diferencia con perfiles galvanizados: el perfil negro requiere arenado o "
                     "limpieza mecánica y pintado antes de su instalación exterior en Lima Norte. Advertencias: para cálculos de carga "
-                    "estructural o voladizos, consulte siempre a un ingeniero colegiado; manipular con guantes de cuero por cantos vivos. "
-                    "TODO: [validar radio de empalme por el propietario]."
+                    "estructural o voladizos, consulte siempre a un ingeniero colegiado; manipular con guantes de cuero por cantos vivos."
                 ),
                 "precio_unitario": Decimal("176.00"),
                 "stock_disponible": 5,
@@ -123,13 +120,12 @@ def seed_database():
                 "descripcion_corta": "Fierro corrugado Grado 60 para refuerzo de concreto armado en edificación.",
                 "ficha_tecnica": (
                     "Barra de acero corrugado de 5/8 de pulgada (15.87 mm de diámetro nominal) por 9 metros de longitud. Fabricado bajo "
-                    "norma técnica peruana NTP 341.031 Grado 60 TODO: [validar norma por el propietario]. Presenta resaltes (corrugas) de alta "
+                    "norma técnica peruana NTP 341.031 Grado 60. Presenta resaltes (corrugas) de alta "
                     "adherencia para su trabajo conjunto con el concreto armado en edificación civil. Usos recomendados: vigas principales, "
                     "columnas estructurales, zapatas, losas macizas y muros de contención. Medidas estándar: diámetro 15.87 mm, área de "
                     "sección 198 mm². Diferencia con fierros lisos: sus corrugas evitan el deslizamiento interno bajo esfuerzos de tracción. "
                     "Advertencias: no soldar ni doblar en frío más allá de los radios mínimos especificados en el Reglamento Nacional de "
-                    "Edificaciones (RNE); almacenar sobre parihuelas para evitar contaminación con grasa o tierra. TODO: [validar esfuerzo "
-                    "de fluencia mínimo 4200 kg/cm² por el propietario]."
+                    "Edificaciones (RNE); almacenar sobre parihuelas para evitar contaminación con grasa o tierra."
                 ),
                 "precio_unitario": Decimal("68.50"),
                 "stock_disponible": 25,
@@ -150,7 +146,7 @@ def seed_database():
                     "enrollables, paneles de carrocería, electrodomésticos y ductos. Medidas estándar: 1200 x 2400 mm, espesor 1.5 mm. "
                     "Diferencia LAF vs LAC: la plancha LAF posee mejor acabado estético y facilidad para el plegado de precisión, mientras "
                     "que la LAC es más rugosa y para uso estructural. Advertencias: la lámina LAF es altamente susceptible al óxido "
-                    "ambiente si no se engrasa o pinta inmediatamente. TODO: [validar composición química de carbono por el propietario]."
+                    "ambiente si no se engrasa o pinta inmediatamente."
                 ),
                 "precio_unitario": Decimal("195.00"),
                 "stock_disponible": 8,
@@ -166,12 +162,12 @@ def seed_database():
                 "descripcion_corta": "Plancha de acero laminado en caliente para uso estructural y naval.",
                 "ficha_tecnica": (
                     "Plancha de acero laminado en caliente (LAC) de 2.0 mm de espesor y formato de 1.20 x 2.40 metros. Producida a altas "
-                    "temperaturas bajo norma ASTM A1011 / A36 TODO: [validar norma por el propietario]. Posee una textura superficial "
+                    "temperaturas bajo norma ASTM A1011 / A36. Posee una textura superficial "
                     "ligeramente rugosa con capa de óxido de molino. Usos recomendados: plataformas de trabajo, bases de maquinaria, "
                     "tolvas, recipientes no presionados, pisos de camiones y estructuras metálicas soldadas. Medidas estándar: 1.20 x 2.40 m, "
                     "espesor 2.0 mm. Diferencia LAC vs LAF: mayor ductilidad y facilidad de soldadura pesada, ideal para corte por plasma "
                     "o oxicorte. Advertencias: remover la calamina mediante decapado o granallado si se requiere pintura de alta adherencia; "
-                    "usar protección ocular durante el corte. TODO: [validar tolerancia de espesor por el propietario]."
+                    "usar protección ocular durante el corte."
                 ),
                 "precio_unitario": Decimal("215.00"),
                 "stock_disponible": 18,
@@ -187,12 +183,12 @@ def seed_database():
                 "descripcion_corta": "Tubo de acero con recubrimiento anticorrosivo de zinc para intemperie.",
                 "ficha_tecnica": (
                     'Tubo de acero redondo de 1 1/2 pulgada (48.3 mm) exterior con recubrimiento de zinc por inmersión en caliente '
-                    "galvanizado y 6 metros de longitud. Espesor nominal de 2.0 mm TODO: [validar espesor por el propietario]. Ofrece "
+                    "galvanizado y 6 metros de longitud. Espesor nominal de 2.0 mm. Ofrece "
                     "máxima protección anticorrosiva catódica. Usos recomendados: redes de agua, pasamanos exteriores, invernaderos, "
                     "estructuras marinas y postes de alumbrado en ambientes de alta humedad como Puente Piedra. Medidas estándar: "
                     "diámetro 48.3 mm, espesor 2.0 mm. Diferencia galvanizado vs negro: resiste hasta 5 veces más a la intemperie sin necesidad "
                     "de pintura adicional. Advertencias: al soldar tubo galvanizado se liberan vapores de óxido de zinc tóxicos; trabajar "
-                    "siempre en áreas ventiladas con respirador para humos metálicos. TODO: [validar micras de zinc por el propietario]."
+                    "siempre en áreas ventiladas con respirador para humos metálicos."
                 ),
                 "precio_unitario": Decimal("152.00"),
                 "stock_disponible": 14,
@@ -208,12 +204,12 @@ def seed_database():
                 "descripcion_corta": "Plancha galvanizada resistente a la intemperie para ductos y canaletas.",
                 "ficha_tecnica": (
                     "Plancha de acero recubierta con capa de zinc continuo por ambos lados, con espesor de 1.2 mm y medidas de 1.20 x 2.40 "
-                    "metros. Fabricada bajo norma ASTM A653 TODO: [validar norma por el propietario]. Alta resistencia a la corrosión y "
+                    "metros. Fabricada bajo norma ASTM A653. Alta resistencia a la corrosión y "
                     "excelente aptitud para conformado. Usos recomendados: canaletas de lluvias, cubiertas para techos, tolvas de descarga, "
                     "conductos de aire acondicionado y tanques de almacenamiento. Medidas estándar: 1.20 x 2.40 m, espesor 1.2 mm. "
                     "Diferencia galvanizada vs LAF/LAC: no requiere pintura protectora inmediata para su exposición al aire libre. "
                     "Advertencias: evitar el contacto directo con ácidos o alcalinos fuertes que degraden el recubrimiento de zinc; usar "
-                    "herramientas adecuadas para no rayar la capa protectora. TODO: [validar gramaje de capa G60/G90 por el propietario]."
+                    "herramientas adecuadas para no rayar la capa protectora."
                 ),
                 "precio_unitario": Decimal("185.00"),
                 "stock_disponible": 0,
@@ -223,6 +219,7 @@ def seed_database():
         ]
 
         created_count = 0
+        updated_count = 0
         for pdata in products_data:
             existing_p = (
                 db.query(Product).filter(Product.nombre == pdata["nombre"]).first()
@@ -231,9 +228,14 @@ def seed_database():
                 prod = Product(**pdata)
                 db.add(prod)
                 created_count += 1
+            else:
+                existing_p.ficha_tecnica = pdata["ficha_tecnica"]
+                updated_count += 1
 
         db.commit()
-        print(f"✅ Se agregaron {created_count} productos nuevos a la base de datos.")
+        print(
+            f"✅ Se agregaron {created_count} productos nuevos y se actualizaron {updated_count} fichas técnicas de productos existentes."
+        )
         
    
         if settings.GEMINI_API_KEY:

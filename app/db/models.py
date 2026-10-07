@@ -32,7 +32,9 @@ class SafeVector(TypeDecorator):
     cache_ok = True
 
     def load_dialect_impl(self, dialect):
-        if dialect.name == "postgresql" and Vector is not None:
+        if dialect.name == "postgresql":
+            if Vector is None:
+                raise RuntimeError("Falta instalar pgvector")
             return dialect.type_descriptor(Vector(1536))
         return dialect.type_descriptor(JSON())
 
@@ -207,18 +209,3 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)
     rol = Column(Enum(UserRolEnum), default=UserRolEnum.admin, nullable=False)
     activo = Column(Boolean, default=True, nullable=False)
-try:
-    from pgvector.sqlalchemy import Vector
-except ImportError:
-    Vector = None
-
-class SafeVector(TypeDecorator):
-    impl = JSON
-    cache_ok = True
-
-    def load_dialect_impl(self, dialect):
-        if dialect.name == "postgresql":
-            if Vector is None:
-                raise RuntimeError("Falta instalar pgvector: pip install pgvector")
-            return dialect.type_descriptor(Vector(1536))
-        return dialect.type_descriptor(JSON())
