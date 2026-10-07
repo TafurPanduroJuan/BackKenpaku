@@ -40,7 +40,10 @@ def seed_database():
             db.add(admin_user)
             print(f"✅ Administrador creado: {admin_email}")
         else:
-            print(f"ℹ️ El administrador {admin_email} ya existe.")
+            existing_admin.password_hash = get_password_hash(settings.ADMIN_PASSWORD)
+            existing_admin.rol = UserRolEnum.admin
+            existing_admin.activo = True
+            print(f"🔄 Administrador {admin_email} sincronizado con ADMIN_PASSWORD.")
 
         # 2. Productos Iniciales de Acero
         products_data = [
@@ -232,7 +235,7 @@ def seed_database():
         db.commit()
         print(f"✅ Se agregaron {created_count} productos nuevos a la base de datos.")
         
-        # 3. Embeddings para el asesor IA (solo si hay OPENAI_API_KEY real)
+   
         if settings.GEMINI_API_KEY:
             from app.services.embeddings import (
                 generate_product_embedding_text,
