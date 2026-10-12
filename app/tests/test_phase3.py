@@ -79,7 +79,10 @@ def sample_claim(db_session):
     return claim
 
 
-def test_email_service_fallback_mock_mode():
+def test_email_service_fallback_mock_mode(monkeypatch):
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "BREVO_API_KEY", "")
+
     res = send_email(
         to_email="cliente@test.com",
         to_name="Cliente Prueba",

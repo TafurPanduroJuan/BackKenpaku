@@ -334,7 +334,13 @@ def serve_voucher_file(filename: str):
     upload_dir = Path(settings.UPLOAD_DIR)
     file_path = upload_dir / filename
     if not file_path.exists() or not file_path.is_file():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Archivo de voucher no encontrado.")
+        # Fallback de resolución relativa a la raíz del proyecto backend
+        backend_root = Path(__file__).resolve().parent.parent.parent
+        alt_path = backend_root / settings.UPLOAD_DIR / filename
+        if alt_path.exists() and alt_path.is_file():
+            file_path = alt_path
+        else:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Archivo de voucher no encontrado.")
 
     ext = file_path.suffix.lower()
     media_types = {
@@ -345,4 +351,4 @@ def serve_voucher_file(filename: str):
         ".pdf": "application/pdf",
     }
     media_type = media_types.get(ext, "application/octet-stream")
-    return FileResponse(file_path, media_type=media_type)
+    return FileResponse(file_path, media_type=media_type, content_disposition_type="inline")

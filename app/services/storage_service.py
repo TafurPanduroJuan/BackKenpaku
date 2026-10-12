@@ -77,6 +77,9 @@ def upload_voucher_file(file_bytes: bytes, original_filename: str, content_type:
     # 2. Fallback local seguro (en disco)
     try:
         upload_path = Path(settings.UPLOAD_DIR)
+        if not upload_path.is_absolute():
+            backend_root = Path(__file__).resolve().parent.parent.parent
+            upload_path = backend_root / settings.UPLOAD_DIR
         upload_path.mkdir(parents=True, exist_ok=True)
         file_path = upload_path / unique_filename
         file_path.write_bytes(file_bytes)
