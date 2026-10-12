@@ -55,7 +55,10 @@ class ProductAcabadoEnum(str, enum.Enum):
 
 class OrderEstadoEnum(str, enum.Enum):
     pendiente = "pendiente"
+    flete_cotizado = "flete_cotizado"
     confirmado = "confirmado"
+    despachado = "despachado"
+    listo_para_recojo = "listo_para_recojo"
     entregado = "entregado"
     cancelado = "cancelado"
 
@@ -129,6 +132,11 @@ class Order(Base):
     igv = Column(Numeric(10, 2), nullable=False)
     total = Column(Numeric(10, 2), nullable=False)
     acepto_privacidad = Column(Boolean, nullable=False)
+    costo_flete = Column(Numeric(10, 2), default=0.00, nullable=False)
+    estado_flete = Column(String(50), default="sin_cotizar", nullable=False)
+    tracking_token = Column(String(64), unique=True, index=True, nullable=True)
+    fecha_pago = Column(DateTime(timezone=True), nullable=True)
+    voucher_referencia = Column(Text, nullable=True)
     created_at = Column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -136,6 +144,33 @@ class Order(Base):
     items = relationship(
         "OrderItem", back_populates="order", cascade="all, delete-orphan"
     )
+    events = relationship(
+        "OrderEvent",
+        back_populates="order",
+        cascade="all, delete-orphan",
+        order_by="OrderEvent.created_at.asc()",
+    )
+
+
+class OrderEvent(Base):
+    __tablename__ = "order_events"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    order_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("orders.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    estado_anterior = Column(String(50), nullable=True)
+    estado_nuevo = Column(String(50), nullable=False)
+    nota = Column(Text, nullable=True)
+    autor = Column(String(50), default="sistema", nullable=False)
+    created_at = Column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+    order = relationship("Order", back_populates="events")
 
 
 class OrderItem(Base):

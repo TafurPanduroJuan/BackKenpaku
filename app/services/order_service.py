@@ -1,11 +1,12 @@
+import secrets
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Tuple
+from typing import Optional, Tuple
 
 from fastapi import HTTPException, status
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
-from app.db.models import Order, OrderEstadoEnum, OrderItem, Product
+from app.db.models import Order, OrderEstadoEnum, OrderEvent, OrderItem, Product
 from app.schemas.order import OrderCreate
 from app.services.whatsapp import build_whatsapp_order_url
 
@@ -16,7 +17,17 @@ def round_money(amount: Decimal) -> Decimal:
 
 
 def generate_order_code(db: Session) -> str:
-    """Genera un código único secuencial con formato KPK-000123."""
+    """Genera un código único secuencial con formato KPK-000123 usando secuencia atómica en PostgreSQL."""
+    bind = db.get_bind()
+    if bind.dialect.name == "postgresql":
+        db.execute(text("CREATE SEQUENCE IF NOT EXISTS order_code_seq;"))
+        seq_val = db.execute(text("SELECT nextval('order_code_seq');")).scalar()
+        code = f"KPK-{seq_val:06d}"
+        while db.query(Order).filter(Order.codigo == code).first():
+            seq_val = db.execute(text("SELECT nextval('order_code_seq');")).scalar()
+            code = f"KPK-{seq_val:06d}"
+        return code
+
     count = db.query(func.count(Order.id)).scalar() or 0
     seq = count + 1
     code = f"KPK-{seq:06d}"
@@ -28,8 +39,151 @@ def generate_order_code(db: Session) -> str:
     return code
 
 
+VALID_TRANSITIONS_DESPACHO = {
+    OrderEstadoEnum.pendiente: [OrderEstadoEnum.flete_cotizado, OrderEstadoEnum.confirmado, OrderEstadoEnum.cancelado],
+    OrderEstadoEnum.flete_cotizado: [OrderEstadoEnum.confirmado, OrderEstadoEnum.cancelado],
+    OrderEstadoEnum.confirmado: [OrderEstadoEnum.despachado, OrderEstadoEnum.cancelado],
+    OrderEstadoEnum.despachado: [OrderEstadoEnum.entregado, OrderEstadoEnum.cancelado],
+    OrderEstadoEnum.entregado: [],
+    OrderEstadoEnum.cancelado: [],
+}
+
+VALID_TRANSITIONS_RECOJO = {
+    OrderEstadoEnum.pendiente: [OrderEstadoEnum.confirmado, OrderEstadoEnum.cancelado],
+    OrderEstadoEnum.confirmado: [OrderEstadoEnum.listo_para_recojo, OrderEstadoEnum.cancelado],
+    OrderEstadoEnum.listo_para_recojo: [OrderEstadoEnum.entregado, OrderEstadoEnum.cancelado],
+    OrderEstadoEnum.entregado: [],
+    OrderEstadoEnum.cancelado: [],
+}
+
+
+def transition_order_status(
+    db: Session,
+    order: Order,
+    nuevo_estado_input: str,
+    autor: str = "admin",
+    nota: Optional[str] = None,
+    costo_flete: Optional[Decimal] = None,
+) -> Order:
+    """
+    Máquina de estados centralizada para Comercial Kenpaku S.A.C.
+    Valida transiciones legales (Despacho vs Recojo), gestiona el stock e historiza en order_events.
+    """
+    try:
+        nuevo_estado = OrderEstadoEnum(nuevo_estado_input.lower())
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "detail": f"Estado '{nuevo_estado_input}' no es válido. Opciones: {[e.value for e in OrderEstadoEnum]}.",
+                "code": "VALIDATION_ERROR",
+            },
+        )
+
+    estado_anterior = order.estado
+
+    # Si ya se encuentra en ese estado, no hacer nada (idempotente)
+    if estado_anterior == nuevo_estado:
+        return order
+
+    # Estados terminales no admiten retroceso ni cambios
+    if estado_anterior in (OrderEstadoEnum.entregado, OrderEstadoEnum.cancelado):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "detail": f"El pedido {order.codigo} se encuentra en estado terminal '{estado_anterior.value}' y no puede modificarse.",
+                "code": "TERMINAL_STATE_ERROR",
+            },
+        )
+
+    # Validar transición según modalidad
+    transitions_map = VALID_TRANSITIONS_RECOJO if order.recojo_en_tienda else VALID_TRANSITIONS_DESPACHO
+    allowed_next = transitions_map.get(estado_anterior, [])
+
+    if nuevo_estado not in allowed_next:
+        modalidad_str = "Recojo en almacén" if order.recojo_en_tienda else "Despacho a obra"
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "detail": f"Transición no permitida: de '{estado_anterior.value}' a '{nuevo_estado.value}' para '{modalidad_str}'.",
+                "code": "INVALID_STATE_TRANSITION",
+            },
+        )
+
+    # Lógica de Flete (si pasa a flete_cotizado)
+    if nuevo_estado == OrderEstadoEnum.flete_cotizado:
+        if costo_flete is not None and costo_flete >= Decimal("0.00"):
+            order.costo_flete = round_money(costo_flete)
+            order.estado_flete = "cotizado"
+            order.total = round_money(order.subtotal + order.igv + order.costo_flete)
+            if not nota:
+                nota = f"Flete cotizado por S/ {order.costo_flete:.2f}"
+
+    # Lógica de Stock al confirmar: Descontar inventario disponible
+    if nuevo_estado == OrderEstadoEnum.confirmado and estado_anterior not in (
+        OrderEstadoEnum.confirmado,
+        OrderEstadoEnum.entregado,
+        OrderEstadoEnum.despachado,
+        OrderEstadoEnum.listo_para_recojo,
+    ):
+        stock_errors = []
+        for item in order.items:
+            product = db.query(Product).filter(Product.id == item.product_id).first()
+            if not product or product.stock_disponible < item.cantidad:
+                stock_errors.append(
+                    {
+                        "product_id": str(item.product_id),
+                        "nombre": item.nombre_snapshot,
+                        "stock_disponible": product.stock_disponible if product else 0,
+                        "solicitado": item.cantidad,
+                    }
+                )
+
+        if stock_errors:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "detail": "No se puede confirmar el pedido. Stock insuficiente en el inventario actual.",
+                    "code": "STOCK_INSUFFICIENT",
+                    "productos_afectados": stock_errors,
+                },
+            )
+
+        for item in order.items:
+            product = db.query(Product).filter(Product.id == item.product_id).first()
+            if product:
+                product.stock_disponible -= item.cantidad
+
+    # Lógica de Stock al cancelar: Restituir stock si ya había sido descontado
+    elif nuevo_estado == OrderEstadoEnum.cancelado and estado_anterior in (
+        OrderEstadoEnum.confirmado,
+        OrderEstadoEnum.despachado,
+        OrderEstadoEnum.listo_para_recojo,
+    ):
+        for item in order.items:
+            product = db.query(Product).filter(Product.id == item.product_id).first()
+            if product:
+                product.stock_disponible += item.cantidad
+
+    order.estado = nuevo_estado
+
+    # Registrar evento en la línea de tiempo
+    event = OrderEvent(
+        order_id=order.id,
+        estado_anterior=estado_anterior.value,
+        estado_nuevo=nuevo_estado.value,
+        nota=nota or f"Estado cambiado a {nuevo_estado.value}",
+        autor=autor,
+    )
+    db.add(event)
+
+    db.commit()
+    db.refresh(order)
+    return order
+
+
 def create_order_service(db: Session, order_in: OrderCreate) -> Tuple[Order, str]:
-    """Crea un nuevo pedido validando privacidad, stock y recalculando IGV en PEN."""
+    """Crea un nuevo pedido validando privacidad, stock, asignando tracking_token y registrando evento inicial."""
     if not order_in.acepto_privacidad:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -99,6 +253,8 @@ def create_order_service(db: Session, order_in: OrderCreate) -> Tuple[Order, str
     igv = round_money(total - subtotal)
 
     codigo = generate_order_code(db)
+    tracking_token = f"kpk_{secrets.token_urlsafe(16)}"
+    estado_flete = "sin_flete" if order_in.recojo_en_tienda else "sin_cotizar"
 
     order = Order(
         codigo=codigo,
@@ -112,6 +268,9 @@ def create_order_service(db: Session, order_in: OrderCreate) -> Tuple[Order, str
         subtotal=subtotal,
         igv=igv,
         total=total,
+        costo_flete=Decimal("0.00"),
+        estado_flete=estado_flete,
+        tracking_token=tracking_token,
         acepto_privacidad=order_in.acepto_privacidad,
     )
     db.add(order)
@@ -126,6 +285,16 @@ def create_order_service(db: Session, order_in: OrderCreate) -> Tuple[Order, str
             precio_unitario_snapshot=precio_unitario,
         )
         db.add(order_item)
+
+    # Evento inicial en order_events
+    initial_event = OrderEvent(
+        order_id=order.id,
+        estado_anterior=None,
+        estado_nuevo=OrderEstadoEnum.pendiente.value,
+        nota="Pedido registrado por el cliente en la plataforma web",
+        autor="cliente",
+    )
+    db.add(initial_event)
 
     db.commit()
     db.refresh(order)

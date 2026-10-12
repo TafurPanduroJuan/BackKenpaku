@@ -20,7 +20,12 @@ from app.db.session import get_db
 from app.routers.auth import get_current_admin_user
 from app.schemas.admin import ChatLogResponse, DashboardMetrics
 from app.schemas.claim import ClaimDetailResponse
-from app.schemas.order import OrderDetailResponse, OrderItemResponse, OrderStatusUpdate
+from app.schemas.order import (
+    OrderDetailResponse,
+    OrderEventResponse,
+    OrderItemResponse,
+    OrderStatusUpdate,
+)
 from app.schemas.product import (
     ProductCreate,
     ProductPaginatedResponse,
@@ -33,6 +38,7 @@ from app.services.embeddings import (
     generate_product_embedding_text,
     get_embedding,
 )
+from app.services.order_service import transition_order_status
 
 router = APIRouter(prefix="/api/admin", tags=["Admin"])
 
@@ -97,6 +103,51 @@ def get_dashboard_metrics(
     )
 
 
+def build_order_detail_response(order: Order) -> OrderDetailResponse:
+    items_resp = [
+        OrderItemResponse(
+            nombre=item.nombre_snapshot,
+            cantidad=item.cantidad,
+            precio_unitario=item.precio_unitario_snapshot,
+        )
+        for item in order.items
+    ]
+    events_resp = [
+        OrderEventResponse(
+            id=ev.id,
+            estado_anterior=ev.estado_anterior,
+            estado_nuevo=ev.estado_nuevo,
+            nota=ev.nota,
+            autor=ev.autor,
+            created_at=ev.created_at,
+        )
+        for ev in (order.events or [])
+    ]
+    return OrderDetailResponse(
+        id=order.id,
+        codigo=order.codigo,
+        cliente_nombre=order.cliente_nombre,
+        cliente_telefono=order.cliente_telefono,
+        cliente_correo=order.cliente_correo,
+        direccion=order.direccion,
+        recojo_en_tienda=order.recojo_en_tienda,
+        observaciones=order.observaciones,
+        estado=order.estado.value,
+        subtotal=order.subtotal,
+        igv=order.igv,
+        total=order.total,
+        costo_flete=order.costo_flete,
+        estado_flete=order.estado_flete,
+        tracking_token=order.tracking_token,
+        fecha_pago=order.fecha_pago,
+        voucher_referencia=order.voucher_referencia,
+        acepto_privacidad=order.acepto_privacidad,
+        created_at=order.created_at,
+        items=items_resp,
+        events=events_resp,
+    )
+
+
 # ==================== GESTIÓN DE PEDIDOS (ADMIN) ====================
 @router.get("/orders")
 def get_admin_orders(
@@ -119,36 +170,7 @@ def get_admin_orders(
         .all()
     )
 
-    result = []
-    for order in items_db:
-        items_resp = [
-            OrderItemResponse(
-                nombre=item.nombre_snapshot,
-                cantidad=item.cantidad,
-                precio_unitario=item.precio_unitario_snapshot,
-            )
-            for item in order.items
-        ]
-        result.append(
-            OrderDetailResponse(
-                id=order.id,
-                codigo=order.codigo,
-                cliente_nombre=order.cliente_nombre,
-                cliente_telefono=order.cliente_telefono,
-                cliente_correo=order.cliente_correo,
-                direccion=order.direccion,
-                recojo_en_tienda=order.recojo_en_tienda,
-                observaciones=order.observaciones,
-                estado=order.estado.value,
-                subtotal=order.subtotal,
-                igv=order.igv,
-                total=order.total,
-                acepto_privacidad=order.acepto_privacidad,
-                created_at=order.created_at,
-                items=items_resp,
-            )
-        )
-
+    result = [build_order_detail_response(o) for o in items_db]
     return {"items": result, "total": total, "page": page, "page_size": page_size}
 
 
@@ -166,32 +188,7 @@ def get_admin_order_by_id(
             detail={"detail": "Pedido no encontrado.", "code": "NOT_FOUND"},
         )
 
-    items_resp = [
-        OrderItemResponse(
-            nombre=item.nombre_snapshot,
-            cantidad=item.cantidad,
-            precio_unitario=item.precio_unitario_snapshot,
-        )
-        for item in order.items
-    ]
-
-    return OrderDetailResponse(
-        id=order.id,
-        codigo=order.codigo,
-        cliente_nombre=order.cliente_nombre,
-        cliente_telefono=order.cliente_telefono,
-        cliente_correo=order.cliente_correo,
-        direccion=order.direccion,
-        recojo_en_tienda=order.recojo_en_tienda,
-        observaciones=order.observaciones,
-        estado=order.estado.value,
-        subtotal=order.subtotal,
-        igv=order.igv,
-        total=order.total,
-        acepto_privacidad=order.acepto_privacidad,
-        created_at=order.created_at,
-        items=items_resp,
-    )
+    return build_order_detail_response(order)
 
 
 @router.patch("/orders/{order_id}/estado", response_model=OrderDetailResponse)
@@ -202,9 +199,8 @@ def update_order_status(
     admin_user: User = Depends(get_current_admin_user),
 ):
     """
-    Actualiza el estado de un pedido.
-    REGLA CRÍTICA: Al pasar a 'confirmado', valida y descuenta el stock disponible.
-    Si se cancela un pedido previamente confirmado, restituye el stock.
+    Actualiza el estado de un pedido usando la máquina de estados centralizada.
+    Valida transiciones legales (Despacho vs Recojo), gestiona stock y registra en order_events.
     """
     order = db.query(Order).filter(Order.id == order_id).first()
     if not order:
@@ -213,94 +209,16 @@ def update_order_status(
             detail={"detail": "Pedido no encontrado.", "code": "NOT_FOUND"},
         )
 
-    nuevo_estado_str = status_in.estado.lower()
-    try:
-        nuevo_estado = OrderEstadoEnum(nuevo_estado_str)
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={
-                "detail": f"Estado '{status_in.estado}' no es válido. Opciones: pendiente, confirmado, entregado, cancelado.",
-                "code": "VALIDATION_ERROR",
-            },
-        )
-
-    estado_anterior = order.estado
-
-    # Transición a 'confirmado': Descontar stock
-    if nuevo_estado == OrderEstadoEnum.confirmado and estado_anterior not in (
-        OrderEstadoEnum.confirmado,
-        OrderEstadoEnum.entregado,
-    ):
-        stock_errors = []
-        for item in order.items:
-            product = db.query(Product).filter(Product.id == item.product_id).first()
-            if not product or product.stock_disponible < item.cantidad:
-                stock_errors.append(
-                    {
-                        "product_id": str(item.product_id),
-                        "nombre": item.nombre_snapshot,
-                        "stock_disponible": product.stock_disponible if product else 0,
-                        "solicitado": item.cantidad,
-                    }
-                )
-
-        if stock_errors:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "detail": "No se puede confirmar el pedido. Stock insuficiente en el inventario actual.",
-                    "code": "STOCK_INSUFFICIENT",
-                    "productos_afectados": stock_errors,
-                },
-            )
-
-        # Aplicar descuento de stock
-        for item in order.items:
-            product = db.query(Product).filter(Product.id == item.product_id).first()
-            if product:
-                product.stock_disponible -= item.cantidad
-
-    # Transición a 'cancelado' viniendo de 'confirmado' o 'entregado': Restituir stock
-    elif nuevo_estado == OrderEstadoEnum.cancelado and estado_anterior in (
-        OrderEstadoEnum.confirmado,
-        OrderEstadoEnum.entregado,
-    ):
-        for item in order.items:
-            product = db.query(Product).filter(Product.id == item.product_id).first()
-            if product:
-                product.stock_disponible += item.cantidad
-
-    order.estado = nuevo_estado
-    db.commit()
-    db.refresh(order)
-
-    items_resp = [
-        OrderItemResponse(
-            nombre=item.nombre_snapshot,
-            cantidad=item.cantidad,
-            precio_unitario=item.precio_unitario_snapshot,
-        )
-        for item in order.items
-    ]
-
-    return OrderDetailResponse(
-        id=order.id,
-        codigo=order.codigo,
-        cliente_nombre=order.cliente_nombre,
-        cliente_telefono=order.cliente_telefono,
-        cliente_correo=order.cliente_correo,
-        direccion=order.direccion,
-        recojo_en_tienda=order.recojo_en_tienda,
-        observaciones=order.observaciones,
-        estado=order.estado.value,
-        subtotal=order.subtotal,
-        igv=order.igv,
-        total=order.total,
-        acepto_privacidad=order.acepto_privacidad,
-        created_at=order.created_at,
-        items=items_resp,
+    updated_order = transition_order_status(
+        db=db,
+        order=order,
+        nuevo_estado_input=status_in.estado,
+        autor="admin",
+        nota=status_in.nota,
+        costo_flete=status_in.costo_flete,
     )
+
+    return build_order_detail_response(updated_order)
 
 
 # ==================== GESTIÓN DE PRODUCTOS (ADMIN) ====================

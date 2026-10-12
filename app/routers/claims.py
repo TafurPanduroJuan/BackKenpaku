@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app.db.models import Claim, ClaimEstadoEnum
@@ -12,8 +12,18 @@ router = APIRouter(prefix="/api/claims", tags=["Claims"])
 
 
 def generate_claim_code(db: Session) -> str:
-    """Genera un código único de seguimiento con formato RC-2026-000001."""
+    """Genera un código único de seguimiento con formato RC-YYYY-000001 usando secuencia atómica en PostgreSQL."""
     year = datetime.now(timezone.utc).year
+    bind = db.get_bind()
+    if bind.dialect.name == "postgresql":
+        db.execute(text("CREATE SEQUENCE IF NOT EXISTS claim_code_seq;"))
+        seq_val = db.execute(text("SELECT nextval('claim_code_seq');")).scalar()
+        code = f"RC-{year}-{seq_val:06d}"
+        while db.query(Claim).filter(Claim.codigo_seguimiento == code).first():
+            seq_val = db.execute(text("SELECT nextval('claim_code_seq');")).scalar()
+            code = f"RC-{year}-{seq_val:06d}"
+        return code
+
     count = db.query(func.count(Claim.id)).scalar() or 0
     seq = count + 1
     code = f"RC-{year}-{seq:06d}"

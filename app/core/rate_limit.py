@@ -28,8 +28,20 @@ chat_rate_limiter = IPRateLimiter(requests_per_minute=20, window_seconds=60)
 login_rate_limiter = IPRateLimiter(requests_per_minute=5, window_seconds=60)
 
 
+def get_real_client_ip(request: Request) -> str:
+    """Extrae la IP real del visitante considerando cabeceras de proxy inverso (Render / CDN)."""
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if forwarded_for:
+        # La primera IP de la lista es la del cliente original
+        return forwarded_for.split(",")[0].strip()
+    real_ip = request.headers.get("x-real-ip")
+    if real_ip:
+        return real_ip.strip()
+    return request.client.host if request.client else "unknown"
+
+
 async def check_chat_rate_limit(request: Request):
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = get_real_client_ip(request)
     if not chat_rate_limiter.is_allowed(client_ip):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -38,7 +50,7 @@ async def check_chat_rate_limit(request: Request):
 
 
 async def check_login_rate_limit(request: Request):
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = get_real_client_ip(request)
     if not login_rate_limiter.is_allowed(client_ip):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,

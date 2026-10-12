@@ -43,6 +43,17 @@ class OrderItemResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class OrderEventResponse(BaseModel):
+    id: UUID
+    estado_anterior: Optional[str] = None
+    estado_nuevo: str
+    nota: Optional[str] = None
+    autor: str
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class OrderResponse(BaseModel):
     id: UUID
     codigo: str
@@ -50,6 +61,9 @@ class OrderResponse(BaseModel):
     subtotal: Decimal
     igv: Decimal
     total: Decimal
+    costo_flete: Decimal = Decimal("0.00")
+    estado_flete: str = "sin_cotizar"
+    tracking_token: Optional[str] = None
     items: List[OrderItemResponse]
     whatsapp_url: str
 
@@ -69,12 +83,21 @@ class OrderDetailResponse(BaseModel):
     subtotal: Decimal
     igv: Decimal
     total: Decimal
+    costo_flete: Decimal = Decimal("0.00")
+    estado_flete: str = "sin_cotizar"
+    tracking_token: Optional[str] = None
+    fecha_pago: Optional[datetime] = None
+    voucher_referencia: Optional[str] = None
     acepto_privacidad: bool
     created_at: datetime
     items: List[OrderItemResponse]
+    events: List[OrderEventResponse] = []
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class OrderStatusUpdate(BaseModel):
     estado: str
+    nota: Optional[str] = None
+    costo_flete: Optional[Decimal] = None
+
