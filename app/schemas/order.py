@@ -101,3 +101,30 @@ class OrderStatusUpdate(BaseModel):
     nota: Optional[str] = None
     costo_flete: Optional[Decimal] = None
 
+
+class OrderPublicEventResponse(BaseModel):
+    estado_nuevo: str
+    nota: Optional[str] = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class OrderPublicTrackingResponse(BaseModel):
+    codigo: str
+    estado: str
+    recojo_en_tienda: bool
+    subtotal: Decimal
+    igv: Decimal
+    costo_flete: Decimal = Decimal("0.00")
+    estado_flete: str = "sin_cotizar"
+    total: Decimal
+    tracking_token: Optional[str] = None
+    created_at: datetime
+    items: List[OrderItemResponse]
+    events: List[OrderPublicEventResponse] = []
+    whatsapp_url: Optional[str] = None
+    cliente_resumen: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+

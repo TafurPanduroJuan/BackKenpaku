@@ -26,6 +26,7 @@ class IPRateLimiter:
 
 chat_rate_limiter = IPRateLimiter(requests_per_minute=20, window_seconds=60)
 login_rate_limiter = IPRateLimiter(requests_per_minute=5, window_seconds=60)
+tracking_rate_limiter = IPRateLimiter(requests_per_minute=25, window_seconds=60)
 
 
 def get_real_client_ip(request: Request) -> str:
@@ -55,4 +56,13 @@ async def check_login_rate_limit(request: Request):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Demasiados intentos fallidos. Por favor intente más tarde.",
+        )
+
+
+async def check_tracking_rate_limit(request: Request):
+    client_ip = get_real_client_ip(request)
+    if not tracking_rate_limiter.is_allowed(client_ip):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Demasiadas consultas de seguimiento. Por favor espere un momento.",
         )
