@@ -2,6 +2,12 @@ import sys
 from decimal import Decimal
 from pathlib import Path
 
+# Configurar encoding UTF-8 seguro para terminales Windows
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+
 # Añadir la raíz del proyecto al sys.path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
