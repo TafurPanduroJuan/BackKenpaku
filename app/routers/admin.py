@@ -2,9 +2,11 @@ from datetime import datetime, timezone
 from typing import List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
+
+from app.services.notification_service import notify_order_status_changed
 
 from app.db.models import (
     ChatLog,
@@ -195,12 +197,14 @@ def get_admin_order_by_id(
 def update_order_status(
     order_id: UUID,
     status_in: OrderStatusUpdate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     admin_user: User = Depends(get_current_admin_user),
 ):
     """
     Actualiza el estado de un pedido usando la máquina de estados centralizada.
     Valida transiciones legales (Despacho vs Recojo), gestiona stock y registra en order_events.
+    Dispara notificaciones por correo y Telegram en segundo plano.
     """
     order = db.query(Order).filter(Order.id == order_id).first()
     if not order:
@@ -216,6 +220,13 @@ def update_order_status(
         autor="admin",
         nota=status_in.nota,
         costo_flete=status_in.costo_flete,
+    )
+
+    background_tasks.add_task(
+        notify_order_status_changed,
+        updated_order,
+        status_in.estado,
+        status_in.nota,
     )
 
     return build_order_detail_response(updated_order)

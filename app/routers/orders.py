@@ -2,7 +2,7 @@ import re
 from typing import Optional
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -16,6 +16,7 @@ from app.schemas.order import (
     OrderPublicTrackingResponse,
     OrderResponse,
 )
+from app.services.notification_service import notify_order_created
 from app.services.order_service import create_order_service
 
 router = APIRouter(prefix="/api/orders", tags=["Orders"])
@@ -42,9 +43,14 @@ def mask_client_name(full_name: Optional[str]) -> str:
 
 
 @router.post("", response_model=OrderResponse, status_code=status.HTTP_201_CREATED)
-def create_order(order_in: OrderCreate, db: Session = Depends(get_db)):
+def create_order(
+    order_in: OrderCreate,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
     """Registra un nuevo pedido en estado 'pendiente' y genera el enlace de WhatsApp y tracking_token."""
     order, whatsapp_url = create_order_service(db, order_in)
+    background_tasks.add_task(notify_order_created, order)
 
     items_resp = [
         OrderItemResponse(

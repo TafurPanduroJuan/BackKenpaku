@@ -28,6 +28,14 @@ class Settings(BaseSettings):
     STOCK_LOW_THRESHOLD: int = 10
     RAG_MAX_DISTANCE: float = 0.5
 
+    # Notificaciones (Fase 3: Brevo, Telegram y Enlaces Públicos)
+    BREVO_API_KEY: Union[str, None] = None
+    SENDER_EMAIL: str = "ventas@kenpaku.pe"
+    SENDER_NAME: str = "Comercial Kenpaku S.A.C."
+    TELEGRAM_BOT_TOKEN: Union[str, None] = None
+    TELEGRAM_CHAT_ID: Union[str, None] = None
+    FRONTEND_URL: str = "http://localhost:5173"
+
     ADMIN_EMAIL: str = "admin@kenpaku.pe"
     ADMIN_PASSWORD: str = "AdminKenpaku2026!"
     @field_validator("DATABASE_URL", mode="before")

@@ -1,12 +1,13 @@
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app.db.models import Claim, ClaimEstadoEnum
 from app.db.session import get_db
 from app.schemas.claim import ClaimCreate, ClaimResponse
+from app.services.notification_service import notify_claim_created
 
 router = APIRouter(prefix="/api/claims", tags=["Claims"])
 
@@ -36,7 +37,11 @@ def generate_claim_code(db: Session) -> str:
 
 
 @router.post("", response_model=ClaimResponse, status_code=status.HTTP_201_CREATED)
-def create_claim(claim_in: ClaimCreate, db: Session = Depends(get_db)):
+def create_claim(
+    claim_in: ClaimCreate,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
     """Registra una reclamación o queja en el Libro de Reclamaciones virtual (Ley 29571)."""
     if not claim_in.acepto_terminos:
         raise HTTPException(
@@ -68,6 +73,8 @@ def create_claim(claim_in: ClaimCreate, db: Session = Depends(get_db)):
     db.add(claim)
     db.commit()
     db.refresh(claim)
+
+    background_tasks.add_task(notify_claim_created, claim)
 
     return ClaimResponse(
         codigo_seguimiento=claim.codigo_seguimiento,
