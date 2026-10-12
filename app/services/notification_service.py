@@ -129,3 +129,58 @@ def notify_chat_handoff(query: str, cliente_info: str = "Cliente web") -> dict:
         results["error"] = str(e)
 
     return results
+
+
+def notify_flete_decision(order: Order, decision: str, nota: Optional[str] = None) -> dict:
+    """
+    Notifica al dueño cuando el cliente acepta o rechaza la cotización del flete a obra.
+    """
+    results = {}
+    try:
+        if decision == "aceptado":
+            msg = (
+                f"🚚 *FLETE ACEPTADO POR EL CLIENTE*\n\n"
+                f"Pedido: `{order.codigo}`\n"
+                f"Cliente: {order.cliente_nombre} ({order.cliente_telefono})\n"
+                f"Costo Flete: *S/ {order.costo_flete:.2f}*\n"
+                f"Total a pagar: *S/ {order.total:.2f}*\n\n"
+                f"👉 El cliente procederá con el pago y la carga de su voucher."
+            )
+        else:
+            msg = (
+                f"⚠️ *FLETE RECHAZADO POR EL CLIENTE*\n\n"
+                f"Pedido: `{order.codigo}`\n"
+                f"Cliente: {order.cliente_nombre} ({order.cliente_telefono})\n"
+                f"Flete cotizado: *S/ {order.costo_flete:.2f}*\n"
+                f"Nota/Motivo: {nota or 'Sin especificar'}\n\n"
+                f"👉 Coordinar nuevo flete o recojo en almacén vía WhatsApp."
+            )
+        results["telegram"] = send_telegram_alert(msg)
+    except Exception as e:
+        logger.error(f"[NOTIFICATION ERROR] Error al notificar decisión de flete {order.codigo}: {e}")
+        results["error"] = str(e)
+
+    return results
+
+
+def notify_voucher_uploaded(order: Order, filename: str) -> dict:
+    """
+    Notifica al dueño cuando el cliente sube un voucher de pago para su pedido.
+    """
+    results = {}
+    try:
+        msg = (
+            f"💳 *NUEVO VOUCHER DE PAGO SUBIDO*\n\n"
+            f"Pedido: `{order.codigo}`\n"
+            f"Cliente: {order.cliente_nombre} ({order.cliente_telefono})\n"
+            f"Total a verificar: *S/ {order.total:.2f}*\n"
+            f"Archivo recibido: `{filename}`\n\n"
+            f"👉 Ingresa al panel de administración para validar el depósito y confirmar el pedido."
+        )
+        results["telegram"] = send_telegram_alert(msg)
+    except Exception as e:
+        logger.error(f"[NOTIFICATION ERROR] Error al notificar voucher subido {order.codigo}: {e}")
+        results["error"] = str(e)
+
+    return results
+

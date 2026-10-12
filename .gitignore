@@ -11,3 +11,4 @@ venv/
 *.sqlite3
 test.db
 scratch/
+uploads/

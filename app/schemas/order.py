@@ -102,6 +102,16 @@ class OrderStatusUpdate(BaseModel):
     costo_flete: Optional[Decimal] = None
 
 
+class FleteDecisionRequest(BaseModel):
+    decision: str  # "aceptar" o "rechazar"
+    nota: Optional[str] = None
+
+
+class VoucherValidationRequest(BaseModel):
+    aprobado: bool  # True para aprobar el pago, False para rechazar o pedir reenviar
+    nota: Optional[str] = None
+
+
 class OrderPublicEventResponse(BaseModel):
     estado_nuevo: str
     nota: Optional[str] = None
@@ -125,6 +135,9 @@ class OrderPublicTrackingResponse(BaseModel):
     events: List[OrderPublicEventResponse] = []
     whatsapp_url: Optional[str] = None
     cliente_resumen: Optional[str] = None
+    voucher_referencia: Optional[str] = None
+    fecha_pago: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
+
 

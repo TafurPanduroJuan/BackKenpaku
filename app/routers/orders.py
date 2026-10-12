@@ -1,23 +1,41 @@
 import re
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 from urllib.parse import quote
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    HTTPException,
+    Query,
+    UploadFile,
+    status,
+)
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.rate_limit import check_tracking_rate_limit
-from app.db.models import Order
+from app.db.models import Order, OrderEvent
 from app.db.session import get_db
 from app.schemas.order import (
+    FleteDecisionRequest,
     OrderCreate,
     OrderItemResponse,
     OrderPublicEventResponse,
     OrderPublicTrackingResponse,
     OrderResponse,
 )
-from app.services.notification_service import notify_order_created
+from app.services.notification_service import (
+    notify_flete_decision,
+    notify_order_created,
+    notify_voucher_uploaded,
+)
 from app.services.order_service import create_order_service
+from app.services.storage_service import ALLOWED_MIME_TYPES, upload_voucher_file
 
 router = APIRouter(prefix="/api/orders", tags=["Orders"])
 
@@ -40,6 +58,49 @@ def mask_client_name(full_name: Optional[str]) -> str:
     if len(parts) == 1:
         return parts[0]
     return f"{parts[0]} {parts[1][0]}."
+
+
+def resolve_tracking_order(
+    db: Session,
+    token: Optional[str] = None,
+    codigo: Optional[str] = None,
+    telefono: Optional[str] = None,
+) -> Order:
+    """
+    Resuelve de forma segura un pedido para operaciones públicas.
+    Admite token secreto o combinación código + teléfono.
+    """
+    if token and token.strip():
+        token_clean = token.strip()
+        order = db.query(Order).filter(Order.tracking_token == token_clean).first()
+        if not order:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No se encontró ningún pedido con los datos proporcionados.",
+            )
+        return order
+    elif codigo and telefono:
+        codigo_clean = codigo.strip().upper()
+        order = db.query(Order).filter(Order.codigo == codigo_clean).first()
+        if not order:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No se encontró ningún pedido con los datos proporcionados.",
+            )
+
+        norm_input = normalize_phone_pe(telefono)
+        norm_db = normalize_phone_pe(order.cliente_telefono)
+        if not norm_input or norm_input != norm_db:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No se encontró ningún pedido con los datos proporcionados.",
+            )
+        return order
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Debe proporcionar el token de seguimiento o el código de pedido junto con su teléfono.",
+        )
 
 
 @router.post("", response_model=OrderResponse, status_code=status.HTTP_201_CREATED)
@@ -92,37 +153,7 @@ def get_order_public_tracking(
     Consulta mediante token secreto O mediante combinación de código + teléfono.
     Seguridad: No expone datos sensibles (dirección completa, DNI, correo) y devuelve 404 uniforme.
     """
-    order = None
-
-    if token and token.strip():
-        token_clean = token.strip()
-        order = db.query(Order).filter(Order.tracking_token == token_clean).first()
-        if not order:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="No se encontró ningún pedido con los datos proporcionados.",
-            )
-    elif codigo and telefono:
-        codigo_clean = codigo.strip().upper()
-        order = db.query(Order).filter(Order.codigo == codigo_clean).first()
-        if not order:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="No se encontró ningún pedido con los datos proporcionados.",
-            )
-
-        norm_input = normalize_phone_pe(telefono)
-        norm_db = normalize_phone_pe(order.cliente_telefono)
-        if not norm_input or norm_input != norm_db:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="No se encontró ningún pedido con los datos proporcionados.",
-            )
-    else:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Debe proporcionar el token de seguimiento o el código de pedido junto con su teléfono.",
-        )
+    order = resolve_tracking_order(db, token=token, codigo=codigo, telefono=telefono)
 
     items_resp = [
         OrderItemResponse(
@@ -160,4 +191,158 @@ def get_order_public_tracking(
         events=events_resp,
         whatsapp_url=wa_url,
         cliente_resumen=mask_client_name(order.cliente_nombre),
+        voucher_referencia=order.voucher_referencia,
+        fecha_pago=order.fecha_pago,
     )
+
+
+@router.post("/tracking/flete-decision")
+def submit_flete_decision(
+    decision_in: FleteDecisionRequest,
+    background_tasks: BackgroundTasks,
+    token: Optional[str] = Query(None),
+    codigo: Optional[str] = Query(None),
+    telefono: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+):
+    """
+    Permite al cliente aceptar o rechazar el flete cotizado para su despacho a obra.
+    Actualiza el estado del flete e historiza el evento en el pedido.
+    """
+    order = resolve_tracking_order(db, token=token, codigo=codigo, telefono=telefono)
+
+    decision = decision_in.decision.lower().strip()
+    if decision not in ("aceptar", "rechazar"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="La decisión debe ser 'aceptar' o 'rechazar'.",
+        )
+
+    if order.estado.value != "flete_cotizado":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"El pedido no se encuentra en estado de cotización de flete (estado actual: {order.estado.value}).",
+        )
+
+    if decision == "aceptar":
+        order.estado_flete = "aceptado"
+        evento_nota = (
+            f"Cliente aceptó el costo de flete de S/ {order.costo_flete:.2f}. "
+            f"Total final a pagar: S/ {order.total:.2f}."
+        )
+    else:
+        order.estado_flete = "rechazado"
+        motivo = f": {decision_in.nota.strip()}" if decision_in.nota else ""
+        evento_nota = f"Cliente rechazó la cotización de flete{motivo}."
+
+    event = OrderEvent(
+        order_id=order.id,
+        estado_anterior=order.estado.value,
+        estado_nuevo=order.estado.value,
+        autor="cliente",
+        nota=evento_nota,
+    )
+    db.add(event)
+    db.commit()
+    db.refresh(order)
+
+    background_tasks.add_task(notify_flete_decision, order, decision, decision_in.nota)
+
+    return {
+        "ok": True,
+        "codigo": order.codigo,
+        "estado_flete": order.estado_flete,
+        "total": float(order.total),
+        "mensaje": "Decisión de flete registrada con éxito.",
+    }
+
+
+@router.post("/tracking/voucher")
+async def upload_order_voucher(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    token: Optional[str] = Query(None),
+    codigo: Optional[str] = Query(None),
+    telefono: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+):
+    """
+    Permite al cliente subir el comprobante de pago (voucher Yape/Plin/transferencia).
+    Valida tipo de archivo (JPG, PNG, WEBP, PDF) y tamaño máximo (5MB).
+    Almacena en Supabase Storage (o fallback seguro) y notifica al administrador.
+    """
+    order = resolve_tracking_order(db, token=token, codigo=codigo, telefono=telefono)
+
+    content_type = (file.content_type or "").lower().split(";")[0].strip()
+    if content_type not in ALLOWED_MIME_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Tipo de archivo no permitido. Solo se aceptan imágenes (JPG, PNG, WEBP) o documentos PDF.",
+        )
+
+    file_bytes = await file.read()
+    if len(file_bytes) > settings.MAX_UPLOAD_SIZE_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El archivo excede el tamaño máximo permitido de 5 MB.",
+        )
+
+    if len(file_bytes) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El archivo proporcionado está vacío.",
+        )
+
+    file_url, saved_filename = upload_voucher_file(file_bytes, file.filename or "voucher.png", content_type)
+
+    order.voucher_referencia = file_url
+    order.fecha_pago = datetime.now(timezone.utc)
+    if order.estado_flete == "cotizado":
+        order.estado_flete = "aceptado"
+
+    event = OrderEvent(
+        order_id=order.id,
+        estado_anterior=order.estado.value,
+        estado_nuevo=order.estado.value,
+        autor="cliente",
+        nota=f"Comprobante de pago cargado ({saved_filename}). En proceso de verificación por caja.",
+    )
+    db.add(event)
+    db.commit()
+    db.refresh(order)
+
+    background_tasks.add_task(notify_voucher_uploaded, order, saved_filename)
+
+    return {
+        "ok": True,
+        "codigo": order.codigo,
+        "voucher_url": file_url,
+        "fecha_pago": order.fecha_pago.isoformat() if order.fecha_pago else None,
+        "mensaje": "Comprobante de pago recibido con éxito. Será validado a la brevedad por el equipo de caja.",
+    }
+
+
+@router.get("/voucher/{filename}")
+def serve_voucher_file(filename: str):
+    """
+    Sirve localmente un archivo de voucher en caso de uso de almacenamiento en disco.
+    Protegido contra Directory Traversal.
+    """
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nombre de archivo inválido.")
+
+    upload_dir = Path(settings.UPLOAD_DIR)
+    file_path = upload_dir / filename
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Archivo de voucher no encontrado.")
+
+    ext = file_path.suffix.lower()
+    media_types = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+        ".pdf": "application/pdf",
+    }
+    media_type = media_types.get(ext, "application/octet-stream")
+    return FileResponse(file_path, media_type=media_type)

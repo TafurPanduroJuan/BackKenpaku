@@ -14,6 +14,7 @@ from app.db.models import (
     Claim,
     Order,
     OrderEstadoEnum,
+    OrderEvent,
     OrderItem,
     Product,
     User,
@@ -27,6 +28,7 @@ from app.schemas.order import (
     OrderEventResponse,
     OrderItemResponse,
     OrderStatusUpdate,
+    VoucherValidationRequest,
 )
 from app.schemas.product import (
     ProductCreate,
@@ -230,6 +232,56 @@ def update_order_status(
     )
 
     return build_order_detail_response(updated_order)
+
+
+@router.put("/orders/{order_id}/validate-voucher", response_model=OrderDetailResponse)
+def validate_order_voucher(
+    order_id: UUID,
+    validation_in: VoucherValidationRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin_user),
+):
+    """
+    Permite al administrador aprobar o rechazar el comprobante de pago subido.
+    - Si se aprueba: El pedido pasa a 'confirmado' y se descuenta el stock de almacén.
+    - Si se rechaza: Se registra la observación en el historial para subsanación del cliente.
+    """
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"detail": "Pedido no encontrado.", "code": "NOT_FOUND"},
+        )
+
+    if validation_in.aprobado:
+        updated_order = transition_order_status(
+            db=db,
+            order=order,
+            nuevo_estado_input="confirmado",
+            autor="admin",
+            nota=validation_in.nota or "Pago validado por caja tras revisión de voucher.",
+        )
+        background_tasks.add_task(
+            notify_order_status_changed,
+            updated_order,
+            "confirmado",
+            validation_in.nota or "Pago validado por caja tras revisión de voucher.",
+        )
+        return build_order_detail_response(updated_order)
+    else:
+        motivo = validation_in.nota.strip() if validation_in.nota else "Comprobante observado o ilegible"
+        event = OrderEvent(
+            order_id=order.id,
+            estado_anterior=order.estado.value,
+            estado_nuevo=order.estado.value,
+            autor="admin",
+            nota=f"Comprobante observado por caja: {motivo}. Favor cargar nuevo voucher.",
+        )
+        db.add(event)
+        db.commit()
+        db.refresh(order)
+        return build_order_detail_response(order)
 
 
 # ==================== GESTIÓN DE PRODUCTOS (ADMIN) ====================

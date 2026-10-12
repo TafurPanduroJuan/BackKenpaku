@@ -36,6 +36,13 @@ class Settings(BaseSettings):
     TELEGRAM_CHAT_ID: Union[str, None] = None
     FRONTEND_URL: str = "http://localhost:5173"
 
+    # Almacenamiento de Comprobantes / Vouchers (Fase 4: Supabase Storage + Fallback Local)
+    SUPABASE_URL: Union[str, None] = None
+    SUPABASE_KEY: Union[str, None] = None
+    SUPABASE_BUCKET_VOUCHERS: str = "vouchers"
+    UPLOAD_DIR: str = "uploads/vouchers"
+    MAX_UPLOAD_SIZE_BYTES: int = 5 * 1024 * 1024  # 5 MB
+
     ADMIN_EMAIL: str = "admin@kenpaku.pe"
     ADMIN_PASSWORD: str = "AdminKenpaku2026!"
     @field_validator("DATABASE_URL", mode="before")
