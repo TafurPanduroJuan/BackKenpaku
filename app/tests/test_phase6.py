@@ -5,6 +5,12 @@ from decimal import Decimal
 from app.db.models import Order, OrderEstadoEnum
 from app.tests.test_admin import seed_admin_and_product
 
+import pytest
+from pydantic import ValidationError
+
+from app.schemas.claim import ClaimCreate
+from app.schemas.order import ClienteInfo
+
 
 def make_order(db_session, codigo, **kwargs):
     data = dict(
@@ -89,3 +95,58 @@ def test_admin_orders_search_combined_with_estado(client, db_session):
         "/api/admin/orders?q=KPK-9200&estado=entregado", headers=headers
     ).json()
     assert [o["codigo"] for o in data["items"]] == ["KPK-920002"]
+
+def test_cliente_telefono_se_normaliza():
+    c = ClienteInfo(nombre="Juan Pérez", telefono="+51 987-654-321", correo="juan@kenpaku.pe")
+    assert c.telefono == "987654321"
+
+
+@pytest.mark.parametrize("telefono", ["12345678", "887654321", "98765432", "abc987654"])
+def test_cliente_telefono_invalido(telefono):
+    with pytest.raises(ValidationError):
+        ClienteInfo(nombre="Juan Pérez", telefono=telefono, correo="juan@kenpaku.pe")
+
+
+def test_cliente_nombre_limpia_espacios_y_rechaza_digitos():
+    c = ClienteInfo(
+        nombre="  María   O'Brien-Díaz ", telefono="987654321", correo="m@kenpaku.pe"
+    )
+    assert c.nombre == "María O'Brien-Díaz"
+    with pytest.raises(ValidationError):
+        ClienteInfo(nombre="Juan123", telefono="987654321", correo="juan@kenpaku.pe")
+
+
+def _claim_payload(**cambios):
+    data = {
+        "nombre": "Maria Lopez",
+        "documento": "45678912",
+        "telefono": "912345678",
+        "correo": "maria@kenpaku.pe",
+        "direccion": "Calle Los Olivos 123",
+        "tipo_bien": "producto",
+        "descripcion_bien": "Tubo negro 2 pulgadas",
+        "tipo": "reclamo",
+        "detalle": "El producto llegó con la medida incorrecta.",
+        "pedido_consumidor": "Cambio del producto por la medida correcta.",
+        "acepto_terminos": True,
+    }
+    data.update(cambios)
+    return data
+
+
+def test_claim_documento_valido_e_invalido():
+    assert ClaimCreate(**_claim_payload(documento="ab123456789")).documento == "AB123456789"
+    with pytest.raises(ValidationError):
+        ClaimCreate(**_claim_payload(documento="12$45678"))
+    with pytest.raises(ValidationError):
+        ClaimCreate(**_claim_payload(telefono="123456789"))
+
+
+def test_order_api_rechaza_datos_invalidos(client):
+    payload = {
+        "cliente": {"nombre": "Juan123", "telefono": "12345", "correo": "juan@kenpaku.pe"},
+        "acepto_privacidad": True,
+        "items": [{"product_id": str(uuid.uuid4()), "cantidad": 1}],
+    }
+    response = client.post("/api/orders", json=payload)
+    assert response.status_code == 422
