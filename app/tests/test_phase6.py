@@ -10,7 +10,7 @@ from pydantic import ValidationError
 
 from app.schemas.claim import ClaimCreate
 from app.schemas.order import ClienteInfo
-
+import io
 
 def make_order(db_session, codigo, **kwargs):
     data = dict(
@@ -150,3 +150,144 @@ def test_order_api_rechaza_datos_invalidos(client):
     }
     response = client.post("/api/orders", json=payload)
     assert response.status_code == 422
+
+def test_voucher_observado_sale_de_acciones_hasta_nuevo_voucher(client, db_session):
+    _, product, headers = seed_admin_and_product(db_session)
+    resp = client.post(
+        "/api/orders",
+        json={
+            "cliente": {
+                "nombre": "Ana Ramos",
+                "telefono": "912345678",
+                "correo": "ana@kenpaku.pe",
+            },
+            "direccion": "Jr. Los Pinos 123, Comas",
+            "recojo_en_tienda": False,
+            "acepto_privacidad": True,
+            "items": [{"product_id": str(product.id), "cantidad": 1}],
+        },
+    )
+    pedido = resp.json()
+    token = pedido["tracking_token"]
+    codigo = pedido["codigo"]
+
+    def subir_voucher():
+        files = {"file": ("voucher.png", io.BytesIO(b"imagen"), "image/png")}
+        r = client.post(f"/api/orders/tracking/voucher?token={token}", files=files)
+        assert r.status_code == 200
+
+    def codigos_voucher():
+        data = client.get("/api/admin/action-required", headers=headers).json()
+        return [o["codigo"] for o in data["voucher_por_validar"]]
+
+    subir_voucher()
+    assert codigos_voucher() == [codigo]
+
+    r = client.put(
+        f"/api/admin/orders/{pedido['id']}/validate-voucher",
+        json={"aprobado": False, "nota": "Foto borrosa"},
+        headers=headers,
+    )
+    assert r.status_code == 200
+    assert codigos_voucher() == []
+
+    subir_voucher()
+    assert codigos_voucher() == [codigo]
+
+
+def test_flujo_completo_despacho(client, db_session):
+    _, product, headers = seed_admin_and_product(db_session)
+
+    # 1. El cliente crea el pedido (despacho)
+    resp = client.post(
+        "/api/orders",
+        json={
+            "cliente": {
+                "nombre": "Carlos Mendoza",
+                "telefono": "987654321",
+                "correo": "carlos@kenpaku.pe",
+            },
+            "direccion": "Av. Néstor Gambetta 456, Puente Piedra",
+            "recojo_en_tienda": False,
+            "acepto_privacidad": True,
+            "items": [{"product_id": str(product.id), "cantidad": 2}],
+        },
+    )
+    assert resp.status_code == 201
+    pedido = resp.json()
+    token = pedido["tracking_token"]
+    order_id = pedido["id"]
+    assert pedido["estado"] == "pendiente"
+
+    db_session.refresh(product)
+    assert product.stock_reservado == 2
+    assert product.stock_disponible == 10
+
+    # 2. Aparece en el panel como flete por cotizar
+    acciones = client.get("/api/admin/action-required", headers=headers).json()
+    assert [o["codigo"] for o in acciones["flete_por_cotizar"]] == [pedido["codigo"]]
+
+    # 3. El admin cotiza el flete
+    r = client.patch(
+        f"/api/admin/orders/{order_id}/estado",
+        json={"estado": "flete_cotizado", "costo_flete": 45},
+        headers=headers,
+    )
+    assert r.status_code == 200
+    assert r.json()["estado"] == "flete_cotizado"
+
+    # 4. El cliente acepta el flete
+    r = client.post(
+        f"/api/orders/tracking/flete-decision?token={token}",
+        json={"decision": "aceptar"},
+    )
+    assert r.status_code == 200
+    assert r.json()["estado_flete"] == "aceptado"
+
+    # 5. El cliente sube el voucher
+    files = {"file": ("voucher.png", io.BytesIO(b"imagen"), "image/png")}
+    r = client.post(f"/api/orders/tracking/voucher?token={token}", files=files)
+    assert r.status_code == 200
+
+    acciones = client.get("/api/admin/action-required", headers=headers).json()
+    assert [o["codigo"] for o in acciones["voucher_por_validar"]] == [pedido["codigo"]]
+
+    # 6. El admin aprueba el voucher: confirma y descuenta stock
+    r = client.put(
+        f"/api/admin/orders/{order_id}/validate-voucher",
+        json={"aprobado": True},
+        headers=headers,
+    )
+    assert r.status_code == 200
+    assert r.json()["estado"] == "confirmado"
+    db_session.refresh(product)
+    assert product.stock_disponible == 8
+    assert product.stock_reservado == 0
+
+    # 7. Despacho y entrega
+    for estado in ("despachado", "entregado"):
+        r = client.patch(
+            f"/api/admin/orders/{order_id}/estado",
+            json={"estado": estado},
+            headers=headers,
+        )
+        assert r.status_code == 200
+        assert r.json()["estado"] == estado
+
+    # 8. El cliente ve el historial completo en el seguimiento público
+    tracking = client.get(f"/api/orders/tracking?token={token}").json()
+    assert tracking["estado"] == "entregado"
+    estados = {ev["estado_nuevo"] for ev in tracking["events"]}
+    assert {"flete_cotizado", "confirmado", "despachado", "entregado"} <= estados
+
+    # 9. Un estado terminal no admite cambios
+    r = client.patch(
+        f"/api/admin/orders/{order_id}/estado",
+        json={"estado": "confirmado"},
+        headers=headers,
+    )
+    assert r.status_code == 422
+
+    # 10. Ya no requiere acciones
+    acciones = client.get("/api/admin/action-required", headers=headers).json()
+    assert acciones["total_acciones"] == 0

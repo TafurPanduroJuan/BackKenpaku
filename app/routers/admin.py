@@ -126,6 +126,15 @@ def _to_action_item(order: Order, motivo: str) -> ActionOrderItem:
         fecha_limite_pago=order.fecha_limite_pago,
     )
 
+def _voucher_observado(order: Order) -> bool:
+    """True si caja observó el voucher actual y el cliente aún no subió uno nuevo."""
+    fecha_pago = to_utc(order.fecha_pago)
+    for ev in order.events or []:
+        if not ev.nota or not ev.nota.startswith("Comprobante observado por caja"):
+            continue
+        if fecha_pago is None or to_utc(ev.created_at) >= fecha_pago:
+            return True
+    return False
 
 @router.get("/action-required", response_model=ActionRequiredResponse)
 def get_action_required(
@@ -149,9 +158,10 @@ def get_action_required(
 
     for o in pedidos_abiertos:
         if o.voucher_referencia:
-            voucher_por_validar.append(
-                _to_action_item(o, "Voucher subido: validar el pago")
-            )
+            if not _voucher_observado(o):
+                voucher_por_validar.append(
+                    _to_action_item(o, "Voucher subido: validar el pago")
+                )
             continue
         if (
             o.estado == OrderEstadoEnum.pendiente
