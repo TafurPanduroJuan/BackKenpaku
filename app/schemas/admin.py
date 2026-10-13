@@ -1,5 +1,6 @@
 from datetime import datetime
-from typing import Optional
+from decimal import Decimal
+from typing import List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
@@ -25,3 +26,21 @@ class ChatLogResponse(BaseModel):
     intencion_etiquetada: Optional[int] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+class ActionOrderItem(BaseModel):
+    id: UUID
+    codigo: str
+    cliente_nombre: str
+    estado: str
+    total: Decimal
+    motivo: str
+    created_at: datetime
+    fecha_limite_pago: Optional[datetime] = None
+
+
+class ActionRequiredResponse(BaseModel):
+    flete_por_cotizar: List[ActionOrderItem]
+    voucher_por_validar: List[ActionOrderItem]
+    pedidos_por_vencer: List[ActionOrderItem]
+    reclamos_pendientes: int
+    total_acciones: int

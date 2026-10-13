@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from uuid import UUID
 
@@ -12,6 +12,7 @@ from app.db.models import (
     ChatLog,
     ChatRolEnum,
     Claim,
+    ClaimEstadoEnum,
     Order,
     OrderEstadoEnum,
     OrderEvent,
@@ -21,7 +22,12 @@ from app.db.models import (
 )
 from app.db.session import get_db
 from app.routers.auth import get_current_admin_user
-from app.schemas.admin import ChatLogResponse, DashboardMetrics
+from app.schemas.admin import (
+    ActionOrderItem,
+    ActionRequiredResponse,
+    ChatLogResponse,
+    DashboardMetrics,
+)
 from app.schemas.claim import ClaimDetailResponse
 from app.schemas.order import (
     OrderDetailResponse,
@@ -43,6 +49,7 @@ from app.services.embeddings import (
     get_embedding,
 )
 from app.services.order_service import transition_order_status
+from app.services.cron_service import to_utc
 
 router = APIRouter(prefix="/api/admin", tags=["Admin"])
 
@@ -106,6 +113,77 @@ def get_dashboard_metrics(
         porcentaje_derivadas=porcentaje_derivadas,
     )
 
+# ==================== ACCIONES REQUERIDAS (FASE 6) ====================
+def _to_action_item(order: Order, motivo: str) -> ActionOrderItem:
+    return ActionOrderItem(
+        id=order.id,
+        codigo=order.codigo,
+        cliente_nombre=order.cliente_nombre,
+        estado=order.estado.value,
+        total=order.total,
+        motivo=motivo,
+        created_at=order.created_at,
+        fecha_limite_pago=order.fecha_limite_pago,
+    )
+
+
+@router.get("/action-required", response_model=ActionRequiredResponse)
+def get_action_required(
+    horas_aviso: int = Query(12, ge=1, le=48),
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin_user),
+):
+    """Pedidos y reclamos que requieren acción del administrador hoy."""
+    abiertos = [OrderEstadoEnum.pendiente, OrderEstadoEnum.flete_cotizado]
+    pedidos_abiertos = (
+        db.query(Order)
+        .filter(Order.estado.in_(abiertos))
+        .order_by(Order.created_at.asc())
+        .all()
+    )
+
+    limite = datetime.now(timezone.utc) + timedelta(hours=horas_aviso)
+    flete_por_cotizar: List[ActionOrderItem] = []
+    voucher_por_validar: List[ActionOrderItem] = []
+    pedidos_por_vencer: List[ActionOrderItem] = []
+
+    for o in pedidos_abiertos:
+        if o.voucher_referencia:
+            voucher_por_validar.append(
+                _to_action_item(o, "Voucher subido: validar el pago")
+            )
+            continue
+        if (
+            o.estado == OrderEstadoEnum.pendiente
+            and not o.recojo_en_tienda
+            and o.estado_flete == "sin_cotizar"
+        ):
+            flete_por_cotizar.append(_to_action_item(o, "Falta cotizar el flete"))
+        venc = to_utc(o.fecha_limite_pago)
+        if venc is not None and venc <= limite:
+            pedidos_por_vencer.append(
+                _to_action_item(o, f"Vence en menos de {horas_aviso} horas")
+            )
+
+    reclamos_pendientes = (
+        db.query(func.count(Claim.id))
+        .filter(Claim.estado == ClaimEstadoEnum.pendiente)
+        .scalar()
+        or 0
+    )
+
+    return ActionRequiredResponse(
+        flete_por_cotizar=flete_por_cotizar,
+        voucher_por_validar=voucher_por_validar,
+        pedidos_por_vencer=pedidos_por_vencer,
+        reclamos_pendientes=reclamos_pendientes,
+        total_acciones=(
+            len(flete_por_cotizar)
+            + len(voucher_por_validar)
+            + len(pedidos_por_vencer)
+            + reclamos_pendientes
+        ),
+    )
 
 def build_order_detail_response(order: Order) -> OrderDetailResponse:
     items_resp = [
