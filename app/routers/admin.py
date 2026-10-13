@@ -3,7 +3,7 @@ from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.services.notification_service import notify_order_status_changed
@@ -234,15 +234,26 @@ def build_order_detail_response(order: Order) -> OrderDetailResponse:
 @router.get("/orders")
 def get_admin_orders(
     estado: Optional[OrderEstadoEnum] = Query(None, description="Filtrar por estado"),
+    q: Optional[str] = Query(
+        None, min_length=2, max_length=50, description="Buscar por código o teléfono"
+    ),
     page: int = Query(1, ge=1),
     page_size: int = Query(12, ge=1, le=100),
     db: Session = Depends(get_db),
     admin_user: User = Depends(get_current_admin_user),
 ):
-    """Lista todos los pedidos recibidos con soporte de paginación y filtro por estado."""
+    """Lista pedidos con paginación, filtro por estado y búsqueda por código o teléfono."""
     query = db.query(Order)
     if estado:
         query = query.filter(Order.estado == estado)
+
+    if q:
+        termino = q.strip()
+        solo_digitos = "".join(ch for ch in termino if ch.isdigit())
+        condiciones = [Order.codigo.ilike(f"%{termino}%")]
+        if solo_digitos:
+            condiciones.append(Order.cliente_telefono.ilike(f"%{solo_digitos}%"))
+        query = query.filter(or_(*condiciones))
 
     total = query.count()
     items_db = (
@@ -254,7 +265,6 @@ def get_admin_orders(
 
     result = [build_order_detail_response(o) for o in items_db]
     return {"items": result, "total": total, "page": page, "page_size": page_size}
-
 
 @router.get("/orders/{order_id}", response_model=OrderDetailResponse)
 def get_admin_order_by_id(

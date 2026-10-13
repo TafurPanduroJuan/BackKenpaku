@@ -64,3 +64,28 @@ def test_action_required_classifies_orders(client, db_session):
     assert [o["codigo"] for o in data["pedidos_por_vencer"]] == ["KPK-900003"]
     assert data["reclamos_pendientes"] == 0
     assert data["total_acciones"] == 3
+
+def test_admin_orders_search_by_code_and_phone(client, db_session):
+    _, _, headers = seed_admin_and_product(db_session)
+    make_order(db_session, "KPK-910001", cliente_telefono="987111222")
+    make_order(db_session, "KPK-910002", cliente_telefono="955333444")
+
+    por_codigo = client.get("/api/admin/orders?q=910001", headers=headers).json()
+    assert [o["codigo"] for o in por_codigo["items"]] == ["KPK-910001"]
+
+    por_telefono = client.get("/api/admin/orders?q=955333", headers=headers).json()
+    assert [o["codigo"] for o in por_telefono["items"]] == ["KPK-910002"]
+
+    sin_resultados = client.get("/api/admin/orders?q=000000", headers=headers).json()
+    assert sin_resultados["total"] == 0
+
+
+def test_admin_orders_search_combined_with_estado(client, db_session):
+    _, _, headers = seed_admin_and_product(db_session)
+    make_order(db_session, "KPK-920001")
+    make_order(db_session, "KPK-920002", estado=OrderEstadoEnum.entregado)
+
+    data = client.get(
+        "/api/admin/orders?q=KPK-9200&estado=entregado", headers=headers
+    ).json()
+    assert [o["codigo"] for o in data["items"]] == ["KPK-920002"]
