@@ -112,7 +112,11 @@ def test_render_claim_email_html_structure(sample_claim):
     assert "LIBRO DE RECLAMACIONES VIRTUAL" in html
 
 
-def test_telegram_service_fallback_mock_mode():
+def test_telegram_service_fallback_mock_mode(monkeypatch):
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "TELEGRAM_BOT_TOKEN", "")
+    monkeypatch.setattr(settings, "TELEGRAM_CHAT_ID", "")
+
     res = send_telegram_alert("<b>Alerta de prueba</b>")
     assert res["status"] == "mock"
     assert res["success"] is True

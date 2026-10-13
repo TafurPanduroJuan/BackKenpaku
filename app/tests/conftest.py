@@ -26,6 +26,15 @@ def setup_test_db():
     Base.metadata.drop_all(bind=engine)
 
 
+@pytest.fixture(autouse=True)
+def mock_external_notifications(monkeypatch):
+    """Evita que los tests automáticos envíen correos reales de Brevo o alertas al Telegram personal."""
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "BREVO_API_KEY", "")
+    monkeypatch.setattr(settings, "TELEGRAM_BOT_TOKEN", "")
+    monkeypatch.setattr(settings, "TELEGRAM_CHAT_ID", "")
+
+
 @pytest.fixture
 def db_session():
     connection = engine.connect()
