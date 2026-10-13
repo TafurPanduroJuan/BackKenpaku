@@ -1,11 +1,13 @@
-import secrets
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
+import secrets
 from typing import Optional, Tuple
 
 from fastapi import HTTPException, status
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.db.models import Order, OrderEstadoEnum, OrderEvent, OrderItem, Product
 from app.schemas.order import OrderCreate
 from app.services.whatsapp import build_whatsapp_order_url
@@ -153,17 +155,29 @@ def transition_order_status(
             product = db.query(Product).filter(Product.id == item.product_id).first()
             if product:
                 product.stock_disponible -= item.cantidad
+                if getattr(order, "stock_reservado", False) and getattr(product, "stock_reservado", 0) > 0:
+                    product.stock_reservado = max(0, product.stock_reservado - item.cantidad)
+        order.stock_reservado = False
 
-    # Lógica de Stock al cancelar: Restituir stock si ya había sido descontado
-    elif nuevo_estado == OrderEstadoEnum.cancelado and estado_anterior in (
-        OrderEstadoEnum.confirmado,
-        OrderEstadoEnum.despachado,
-        OrderEstadoEnum.listo_para_recojo,
-    ):
-        for item in order.items:
-            product = db.query(Product).filter(Product.id == item.product_id).first()
-            if product:
-                product.stock_disponible += item.cantidad
+    # Lógica de Stock al cancelar: Restituir stock si ya había sido descontado, o liberar reserva
+    elif nuevo_estado == OrderEstadoEnum.cancelado:
+        if estado_anterior in (
+            OrderEstadoEnum.confirmado,
+            OrderEstadoEnum.despachado,
+            OrderEstadoEnum.listo_para_recojo,
+        ):
+            for item in order.items:
+                product = db.query(Product).filter(Product.id == item.product_id).first()
+                if product:
+                    product.stock_disponible += item.cantidad
+            order.stock_reservado = False
+        elif estado_anterior in (OrderEstadoEnum.pendiente, OrderEstadoEnum.flete_cotizado):
+            if getattr(order, "stock_reservado", False):
+                for item in order.items:
+                    product = db.query(Product).filter(Product.id == item.product_id).first()
+                    if product and getattr(product, "stock_reservado", 0) > 0:
+                        product.stock_reservado = max(0, product.stock_reservado - item.cantidad)
+                order.stock_reservado = False
 
     order.estado = nuevo_estado
 
@@ -255,6 +269,7 @@ def create_order_service(db: Session, order_in: OrderCreate) -> Tuple[Order, str
     codigo = generate_order_code(db)
     tracking_token = f"kpk_{secrets.token_urlsafe(16)}"
     estado_flete = "sin_flete" if order_in.recojo_en_tienda else "sin_cotizar"
+    fecha_limite = datetime.now(timezone.utc) + timedelta(hours=settings.CRON_EXPIRATION_HOURS)
 
     order = Order(
         codigo=codigo,
@@ -271,6 +286,9 @@ def create_order_service(db: Session, order_in: OrderCreate) -> Tuple[Order, str
         costo_flete=Decimal("0.00"),
         estado_flete=estado_flete,
         tracking_token=tracking_token,
+        fecha_limite_pago=fecha_limite,
+        recordatorio_enviado=False,
+        stock_reservado=True,
         acepto_privacidad=order_in.acepto_privacidad,
     )
     db.add(order)
@@ -285,6 +303,8 @@ def create_order_service(db: Session, order_in: OrderCreate) -> Tuple[Order, str
             precio_unitario_snapshot=precio_unitario,
         )
         db.add(order_item)
+        # Reservar stock en el producto (evita sobreventa)
+        product.stock_reservado = (getattr(product, "stock_reservado", 0) or 0) + cantidad
 
     # Evento inicial en order_events
     initial_event = OrderEvent(

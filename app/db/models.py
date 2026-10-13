@@ -101,6 +101,7 @@ class Product(Base):
     ficha_tecnica = Column(Text, nullable=True)
     precio_unitario = Column(Numeric(10, 2), nullable=False)
     stock_disponible = Column(Integer, default=0, nullable=False)
+    stock_reservado = Column(Integer, default=0, nullable=False)
     imagen_url = Column(Text, nullable=True)
     activo = Column(Boolean, default=True, nullable=False, index=True)
     embedding = Column(SafeVector(), nullable=True)
@@ -137,6 +138,9 @@ class Order(Base):
     tracking_token = Column(String(64), unique=True, index=True, nullable=True)
     fecha_pago = Column(DateTime(timezone=True), nullable=True)
     voucher_referencia = Column(Text, nullable=True)
+    fecha_limite_pago = Column(DateTime(timezone=True), nullable=True)
+    recordatorio_enviado = Column(Boolean, default=False, nullable=False)
+    stock_reservado = Column(Boolean, default=True, nullable=False)
     created_at = Column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

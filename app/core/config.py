@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = "uploads/vouchers"
     MAX_UPLOAD_SIZE_BYTES: int = 5 * 1024 * 1024  # 5 MB
 
+    # Automatización y Tareas Programadas (Fase 5: Cron)
+    CRON_SECRET: str = "kenpaku-cron-secret-key-2026"
+    CRON_REMINDER_HOURS: int = 24
+    CRON_EXPIRATION_HOURS: int = 48
+
     ADMIN_EMAIL: str = "admin@kenpaku.pe"
     ADMIN_PASSWORD: str = "AdminKenpaku2026!"
     @field_validator("DATABASE_URL", mode="before")

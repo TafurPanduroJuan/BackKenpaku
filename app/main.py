@@ -11,6 +11,7 @@ from app.routers import (
     categories,
     chat,
     claims,
+    cron,
     health,
     orders,
     products,
@@ -96,6 +97,7 @@ app.include_router(chat.router)
 app.include_router(claims.router)
 app.include_router(auth.router)
 app.include_router(admin.router)
+app.include_router(cron.router)
 
 @app.get("/", include_in_schema=False)
 def root():

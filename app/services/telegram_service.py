@@ -121,3 +121,19 @@ def format_chat_handoff_telegram(
         f"<b>Origen:</b> {cliente_info}\n"
         f"<b>WhatsApp de atención:</b> +{settings.WHATSAPP_NUMBER}"
     )
+
+
+def format_order_auto_expired_telegram(order: Order, motivo: Optional[str] = None) -> str:
+    """Formatea la alerta de cancelación automática por vencimiento de plazo (48h) para Telegram."""
+    admin_url = f"{settings.FRONTEND_URL}/admin/pedidos"
+    motivo_str = motivo or "Plazo de 48h vencido sin confirmación ni comprobante de pago."
+    return (
+        f"⏳ <b>PEDIDO CANCELADO POR VENCIMIENTO (SISTEMA)</b>\n\n"
+        f"<b>Código:</b> <code>{order.codigo}</code>\n"
+        f"<b>Cliente:</b> {order.cliente_nombre} ({order.cliente_telefono})\n"
+        f"<b>Total:</b> S/ {order.total:.2f}\n"
+        f"<b>Motivo:</b> {motivo_str}\n"
+        f"<b>Acción:</b> Reserva de materiales liberada automáticamente al stock.\n\n"
+        f"👉 <a href='{admin_url}'>Ver en Panel Admin</a>"
+    )
+

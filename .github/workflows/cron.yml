@@ -1,0 +1,34 @@
+name: Tareas Programadas Kenpaku (Cron)
+
+on:
+  schedule:
+    # Se ejecuta automáticamente cada hora en punto (00:00, 01:00, etc.) sin costo
+    - cron: '0 * * * *'
+  workflow_dispatch: # Permite disparo manual desde la pestaña Actions de GitHub con un solo clic
+
+jobs:
+  run-cron-tasks:
+    name: Procesar Recordatorios, Vencimientos y Keep-Alive
+    runs-on: ubuntu-latest
+    steps:
+      - name: Invocar Endpoint Protegido de Automatización
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL || 'https://backkenpaku.onrender.com' }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET || 'kenpaku-cron-secret-key-2026' }}
+        run: |
+          echo "Disparando cron de Comercial Kenpaku..."
+          # Configuración de timeout de 120s para permitir que Render despierte si estaba inactivo
+          HTTP_STATUS=$(curl -s -o response.json -w "%{http_code}" \
+            -X POST "$BACKEND_URL/api/cron/process-scheduled-tasks" \
+            -H "X-Cron-Secret: $CRON_SECRET" \
+            -H "Content-Type: application/json" \
+            --max-time 120)
+
+          echo "Respuesta HTTP: $HTTP_STATUS"
+          cat response.json
+
+          if [ "$HTTP_STATUS" -ne 200 ]; then
+            echo "Error: La invocación de tareas programadas falló con código $HTTP_STATUS"
+            exit 1
+          fi
+          echo "Tareas programadas procesadas con éxito."

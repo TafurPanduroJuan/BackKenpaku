@@ -88,6 +88,9 @@ class OrderDetailResponse(BaseModel):
     tracking_token: Optional[str] = None
     fecha_pago: Optional[datetime] = None
     voucher_referencia: Optional[str] = None
+    fecha_limite_pago: Optional[datetime] = None
+    recordatorio_enviado: bool = False
+    stock_reservado: bool = True
     acepto_privacidad: bool
     created_at: datetime
     items: List[OrderItemResponse]
@@ -137,6 +140,8 @@ class OrderPublicTrackingResponse(BaseModel):
     cliente_resumen: Optional[str] = None
     voucher_referencia: Optional[str] = None
     fecha_pago: Optional[datetime] = None
+    fecha_limite_pago: Optional[datetime] = None
+    recordatorio_enviado: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 

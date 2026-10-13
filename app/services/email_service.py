@@ -302,3 +302,135 @@ def render_claim_email_html(claim: Claim) -> str:
     </body>
     </html>
     """
+
+
+def render_order_reminder_email_html(order: Order) -> str:
+    """Genera plantilla de correo recordatorio de 24 horas para pedidos con reserva activa."""
+    tracking_url = f"{settings.FRONTEND_URL}/seguimiento?token={order.tracking_token or ''}"
+    fecha_limite_str = (
+        order.fecha_limite_pago.strftime("%d/%m/%Y %H:%M")
+        if order.fecha_limite_pago
+        else "en las próximas 24 horas"
+    )
+
+    items_rows = ""
+    for item in order.items:
+        subtotal_item = item.precio_unitario_snapshot * item.cantidad
+        items_rows += f"""
+        <tr>
+            <td style="padding: 10px 12px; font-size: 13px; color: #334155; border-bottom: 1px solid #f1f5f9;">
+                <strong>{item.nombre_snapshot}</strong><br>
+                <span style="font-size: 11px; color: #64748b;">Cantidad: {item.cantidad} und.</span>
+            </td>
+            <td style="padding: 10px 12px; font-size: 13px; color: #334155; text-align: right; font-weight: bold; border-bottom: 1px solid #f1f5f9;">
+                S/ {subtotal_item:.2f}
+            </td>
+        </tr>
+        """
+
+    motivo_accion = (
+        "puedes aceptar o coordinar la cotización de flete y subir tu voucher de abono"
+        if order.estado.value == "flete_cotizado"
+        else "puedes verificar las cuentas bancarias autorizadas y cargar tu comprobante de abono"
+    )
+
+    return f"""
+    <!DOCTYPE html>
+    <html lang="es">
+    <head>
+        <meta charset="UTF-8">
+        <title>Recordatorio de Reserva de Pedido {order.codigo}</title>
+    </head>
+    <body style="margin: 0; padding: 0; background-color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+        <table width="100%" border="0" cellspacing="0" cellpadding="0" style="padding: 24px 12px;">
+            <tr>
+                <td align="center">
+                    <table width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width: 600px; background-color: #ffffff; border-radius: 16px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
+                        <!-- Header -->
+                        <tr>
+                            <td style="background-color: #0f172a; padding: 24px 32px; text-align: center;">
+                                <h1 style="margin: 0; color: #ea580c; font-size: 20px; font-weight: 800; letter-spacing: -0.5px;">
+                                    COMERCIAL KENPAKU S.A.C.
+                                </h1>
+                                <p style="margin: 4px 0 0 0; color: #94a3b8; font-size: 12px;">Distribuidores de Acero y Materiales Siderúrgicos</p>
+                            </td>
+                        </tr>
+
+                        <!-- Reminder Banner -->
+                        <tr>
+                            <td style="padding: 24px 32px 12px 32px;">
+                                <div style="background-color: #fef3c7; border: 1px solid #fde68a; border-radius: 12px; padding: 16px; text-align: center;">
+                                    <span style="font-size: 24px; display: block; margin-bottom: 4px;">⏱️</span>
+                                    <h2 style="margin: 0 0 6px 0; color: #92400e; font-size: 16px; font-weight: 800;">
+                                        Tu Reserva de Materiales Está Activa
+                                    </h2>
+                                    <p style="margin: 0; color: #b45309; font-size: 13px; line-height: 1.4;">
+                                        Tu pedido <strong>{order.codigo}</strong> tiene stock temporalmente reservado hasta el <strong>{fecha_limite_str}</strong>.
+                                    </p>
+                                </div>
+                            </td>
+                        </tr>
+
+                        <!-- Body Greeting -->
+                        <tr>
+                            <td style="padding: 16px 32px; font-size: 14px; color: #334155; line-height: 1.6;">
+                                <p>Estimado(a) <strong>{order.cliente_nombre}</strong>,</p>
+                                <p>
+                                    Notamos que han pasado 24 horas desde que generaste tu pedido. Para asegurar la disponibilidad de tus materiales y evitar que el sistema libere la reserva automáticamente tras las 48 horas reglamentarias, {motivo_accion}.
+                                </p>
+                            </td>
+                        </tr>
+
+                        <!-- Items Table -->
+                        <tr>
+                            <td style="padding: 0 32px 16px 32px;">
+                                <table width="100%" border="0" cellspacing="0" cellpadding="0" style="border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden;">
+                                    <tr style="background-color: #f1f5f9;">
+                                        <th style="padding: 10px 12px; font-size: 11px; text-align: left; text-transform: uppercase; color: #64748b; font-weight: bold;">Material Reservado</th>
+                                        <th style="padding: 10px 12px; font-size: 11px; text-align: right; text-transform: uppercase; color: #64748b; font-weight: bold;">Subtotal</th>
+                                    </tr>
+                                    {items_rows}
+                                </table>
+                            </td>
+                        </tr>
+
+                        <!-- Total Row -->
+                        <tr>
+                            <td style="padding: 0 32px 24px 32px;">
+                                <table width="100%" border="0" cellspacing="0" cellpadding="0">
+                                    <tr>
+                                        <td style="padding: 10px 12px; font-size: 15px; color: #0f172a; font-weight: 800; border-top: 1px solid #e2e8f0;">Total a Abonar:</td>
+                                        <td style="padding: 10px 12px; font-size: 17px; color: #ea580c; text-align: right; font-weight: 800; border-top: 1px solid #e2e8f0;">S/ {order.total:.2f}</td>
+                                    </tr>
+                                </table>
+                            </td>
+                        </tr>
+
+                        <!-- CTA Button -->
+                        <tr>
+                            <td style="padding: 0 32px 32px 32px; text-align: center;">
+                                <a href="{tracking_url}" target="_blank" style="display: inline-block; background-color: #0284c7; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 12px; font-size: 14px; font-weight: bold; box-shadow: 0 2px 6px rgba(2,132,199,0.25);">
+                                    👉 Ver Mi Pedido y Subir Comprobante
+                                </a>
+                                <p style="margin: 10px 0 0 0; color: #94a3b8; font-size: 11px;">
+                                    Ingreso directo e instantáneo a la plataforma sin usuario ni contraseña.
+                                </p>
+                            </td>
+                        </tr>
+
+                        <!-- Footer -->
+                        <tr>
+                            <td style="background-color: #f8fafc; border-top: 1px solid #e2e8f0; padding: 20px 32px; text-align: center; color: #94a3b8; font-size: 11px; line-height: 1.5;">
+                                <strong style="color: #64748b;">Comercial Kenpaku S.A.C.</strong><br>
+                                Almacén Central: Panamericana Norte Km 28, Puente Piedra, Lima - Perú.<br>
+                                WhatsApp Ventas: +51 987 654 321
+                            </td>
+                        </tr>
+                    </table>
+                </td>
+            </tr>
+        </table>
+    </body>
+    </html>
+    """
+
