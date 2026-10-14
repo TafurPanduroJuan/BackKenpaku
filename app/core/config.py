@@ -20,8 +20,8 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite:///./test.db"
 
     GEMINI_API_KEY: str = ""
-    GEMINI_MODEL: str = "gemini-3.8-flash"
-    GEMINI_FALLBACK_MODEL: str = "gemini-3.6-flash"  # vacío = sin respaldo
+    GEMINI_MODEL: str = "gemini-3.5-flash-lite"
+    GEMINI_FALLBACK_MODEL: str = "gemini-3.1-flash-lite"  # vacío = sin respaldo
     GEMINI_EMBEDDING_MODEL: str = "gemini-embedding-001"
 
     JWT_SECRET: str = ""
