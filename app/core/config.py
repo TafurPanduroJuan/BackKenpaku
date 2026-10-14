@@ -1,6 +1,15 @@
+import secrets
 from typing import List, Union
-from pydantic import field_validator
+
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_SECRETOS_PUBLICADOS = {
+    "super-secret-jwt-key-change-in-production-min-32-chars",
+    "super-secret-jwt-key-min-32-chars",
+    "kenpaku-cron-secret-key-2026",
+    "AdminKenpaku2026!",
+}
 
 
 class Settings(BaseSettings):
@@ -14,7 +23,7 @@ class Settings(BaseSettings):
     GEMINI_MODEL: str = "gemini-2.5-flash"
     GEMINI_EMBEDDING_MODEL: str = "gemini-embedding-001"
 
-    JWT_SECRET: str = "super-secret-jwt-key-change-in-production-min-32-chars"
+    JWT_SECRET: str = ""
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_MINUTES: int = 120
 
@@ -44,12 +53,13 @@ class Settings(BaseSettings):
     MAX_UPLOAD_SIZE_BYTES: int = 5 * 1024 * 1024  # 5 MB
 
     # Automatización y Tareas Programadas (Fase 5: Cron)
-    CRON_SECRET: str = "kenpaku-cron-secret-key-2026"
+    CRON_SECRET: str = ""
     CRON_REMINDER_HOURS: int = 24
     CRON_EXPIRATION_HOURS: int = 48
 
     ADMIN_EMAIL: str = "admin@kenpaku.pe"
-    ADMIN_PASSWORD: str = "AdminKenpaku2026!"
+    ADMIN_PASSWORD: str = ""
+
     @field_validator("DATABASE_URL", mode="before")
     @classmethod
     def normalize_database_url(cls, v: str) -> str:
@@ -72,6 +82,27 @@ class Settings(BaseSettings):
         elif isinstance(v, list):
             return v
         return ["*"]
+
+    @model_validator(mode="after")
+    def validate_secrets(self):
+        if self.ENV.lower() == "production":
+            errores = []
+            if len(self.JWT_SECRET) < 32 or self.JWT_SECRET in _SECRETOS_PUBLICADOS:
+                errores.append("JWT_SECRET (mínimo 32 caracteres y distinto al de ejemplo)")
+            if len(self.CRON_SECRET) < 16 or self.CRON_SECRET in _SECRETOS_PUBLICADOS:
+                errores.append("CRON_SECRET (mínimo 16 caracteres y distinto al de ejemplo)")
+            if len(self.ADMIN_PASSWORD) < 12 or self.ADMIN_PASSWORD in _SECRETOS_PUBLICADOS:
+                errores.append("ADMIN_PASSWORD (mínimo 12 caracteres y distinta a la de ejemplo)")
+            if errores:
+                raise ValueError(
+                    "Variables inseguras o ausentes en producción: " + "; ".join(errores)
+                )
+        else:
+            if not self.JWT_SECRET:
+                self.JWT_SECRET = secrets.token_urlsafe(48)
+            if not self.CRON_SECRET:
+                self.CRON_SECRET = secrets.token_urlsafe(32)
+        return self
 
     model_config = SettingsConfigDict(
         env_file=".env",
