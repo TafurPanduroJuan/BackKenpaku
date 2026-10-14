@@ -34,8 +34,8 @@ _MAX_ATTEMPTS = 3  # intentos por modelo
 _BACKOFF_SECONDS = (1, 3)  # espera entre intentos
 
 
-def _generation_config(model_name: str) -> dict:
-    config = {"temperature": 0.2, "maxOutputTokens": 1024}
+def _generation_config(model_name: str, max_output_tokens: int = 2048) -> dict:
+    config = {"temperature": 0.2, "maxOutputTokens": max_output_tokens}
     # Los modelos "piensan" y esos tokens consumen maxOutputTokens: se reduce el razonamiento.
     if "2.5" in model_name:
         config["thinkingConfig"] = {"thinkingBudget": 0}
@@ -44,7 +44,17 @@ def _generation_config(model_name: str) -> dict:
     return config
 
 
-def _call_gemini(model_name: str, contents: List[dict]) -> dict:
+def _clean_reply(text: str, finish_reason: str = "") -> str:
+    """Quita el markdown (el chat muestra texto plano) y, si Gemini cortó la respuesta, la recorta a la última oración completa."""
+    text = text.replace("**", "").replace("__", "").strip()
+    if finish_reason and finish_reason not in ("STOP", ""):
+        cut = max(text.rfind("."), text.rfind("?"), text.rfind("!"), text.rfind("\n"))
+        if cut > 40:
+            text = text[: cut + 1].strip()
+    return text
+
+
+def _call_gemini(model_name: str, contents: List[dict], max_output_tokens: int = 2048) -> dict:
     """Llama a Gemini con reintentos ante errores temporales (503/429/timeouts)."""
     last_error: Exception = RuntimeError("sin intentos")
     for attempt in range(_MAX_ATTEMPTS):
@@ -55,7 +65,7 @@ def _call_gemini(model_name: str, contents: List[dict]) -> dict:
                 json={
                     "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT_KENPAKU}]},
                     "contents": contents,
-                    "generationConfig": _generation_config(model_name),
+                    "generationConfig": _generation_config(model_name, max_output_tokens),
                 },
                 timeout=20,
             )
@@ -80,10 +90,10 @@ def _call_gemini(model_name: str, contents: List[dict]) -> dict:
     raise last_error
 
 
-def _call_with_fallback(contents: List[dict]) -> dict:
+def _call_with_fallback(contents: List[dict], max_output_tokens: int = 2048) -> dict:
     """Intenta con el modelo principal y, si sigue caído, con el de respaldo."""
     try:
-        return _call_gemini(settings.GEMINI_MODEL, contents)
+        return _call_gemini(settings.GEMINI_MODEL, contents, max_output_tokens)
     except Exception as primary_error:
         fallback = settings.GEMINI_FALLBACK_MODEL
         if not fallback or fallback == settings.GEMINI_MODEL:
@@ -92,7 +102,7 @@ def _call_with_fallback(contents: List[dict]) -> dict:
             f"⚠️ Modelo principal falló ({primary_error}); "
             f"probando respaldo {fallback}"
         )
-        return _call_gemini(fallback, contents)
+        return _call_gemini(fallback, contents, max_output_tokens)
 
 
 def generate_llm_reply(
@@ -128,12 +138,26 @@ def generate_llm_reply(
             f"CONSULTA DEL CLIENTE:\n{user_query}"
         )
 
-        data = _call_with_fallback(
-            _build_contents(chat_history, user_message_with_context)
-        )
+        contents = _build_contents(chat_history, user_message_with_context)
+        data = _call_with_fallback(contents)
+        candidate = data["candidates"][0]
+        finish_reason = candidate.get("finishReason", "")
 
-        parts = data["candidates"][0]["content"]["parts"]
-        reply_text = "".join(p.get("text", "") for p in parts).strip()
+        # Si Gemini se quedó sin tokens (el razonamiento interno también cuenta), se reintenta una vez con más margen.
+        if finish_reason == "MAX_TOKENS":
+            print(f"⚠️ MAX_TOKENS, usage={data.get('usageMetadata')}; reintentando con 8192")
+            data = _call_with_fallback(contents, max_output_tokens=8192)
+            candidate = data["candidates"][0]
+            finish_reason = candidate.get("finishReason", "")
+        if finish_reason not in ("STOP", ""):
+            print(
+                f"⚠️ Gemini terminó con finishReason={finish_reason} "
+                f"(respuesta posiblemente cortada), usage={data.get('usageMetadata')}"
+            )
+        parts = candidate["content"]["parts"]
+        reply_text = _clean_reply(
+            "".join(p.get("text", "") for p in parts), finish_reason
+        )
         if not reply_text:
             raise ValueError("Respuesta vacía de Gemini")
 
