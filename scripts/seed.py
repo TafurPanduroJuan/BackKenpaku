@@ -27,8 +27,8 @@ from app.db.session import SessionLocal, engine
 def seed_database():
     """Carga inicial idempotente de usuario administrador y productos iniciales."""
     if not settings.ADMIN_PASSWORD:
-            print("❌ Define ADMIN_PASSWORD en el .env o en las variables de entorno antes de ejecutar el seed.")
-    sys.exit(1)
+        print("❌ Define ADMIN_PASSWORD en el .env o en las variables de entorno antes de ejecutar el seed.")
+        sys.exit(1)
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
