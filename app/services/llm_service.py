@@ -45,10 +45,15 @@ def generate_llm_reply(
             f"CONSULTA DEL CLIENTE:\n{user_query}"
         )
 
-        generation_config = {"temperature": 0.2, "maxOutputTokens": 600}
-        # Los modelos 2.5 "piensan" y esos tokens consumen maxOutputTokens: se desactiva.
-        if "2.5" in settings.GEMINI_MODEL:
+        generation_config = {"temperature": 0.2, "maxOutputTokens": 1024}
+        # Los modelos "piensan" y esos tokens consumen maxOutputTokens: se reduce el razonamiento.
+        model_name = settings.GEMINI_MODEL
+        if "2.5" in model_name:
+            # Gemini 2.5 usa thinkingBudget (0 = sin razonamiento)
             generation_config["thinkingConfig"] = {"thinkingBudget": 0}
+        elif "gemini-3" in model_name:
+            # Gemini 3.x usa thinkingLevel
+            generation_config["thinkingConfig"] = {"thinkingLevel": "low"}
 
         response = httpx.post(
             f"{GEMINI_BASE_URL}/models/{settings.GEMINI_MODEL}:generateContent",
