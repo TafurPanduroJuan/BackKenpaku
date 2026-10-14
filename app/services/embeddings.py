@@ -5,7 +5,7 @@ import httpx
 
 from app.core.config import settings
 
-EMBEDDING_DIMENSIONS = 1536  # Debe coincidir con la columna Vector(1536) de la BD
+EMBEDDING_DIMENSIONS = 1536  
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 
 
@@ -45,7 +45,7 @@ def _normalize(vector: List[float]) -> List[float]:
 def get_embedding(text: str, task_type: str = "RETRIEVAL_DOCUMENT") -> List[float]:
    
     if not settings.GEMINI_API_KEY:
-        # Fallback para pruebas unitarias / entorno sin API Key
+       
         import hashlib
 
         h = int(hashlib.md5(text.encode("utf-8")).hexdigest(), 16)
@@ -69,6 +69,12 @@ def get_embedding(text: str, task_type: str = "RETRIEVAL_DOCUMENT") -> List[floa
         if len(values) != EMBEDDING_DIMENSIONS:
             raise ValueError(f"Dimensiones inesperadas: {len(values)}")
         return _normalize(values)
+    except httpx.HTTPStatusError as e:
+        print(
+            f"⚠️ Gemini embeddings HTTP {e.response.status_code} "
+            f"(modelo={settings.GEMINI_EMBEDDING_MODEL}): {e.response.text[:500]}"
+        )
+        return [0.0] * EMBEDDING_DIMENSIONS
     except Exception as e:
         print(f"⚠️ Error generando embedding con Gemini: {e}")
         # Fallback seguro

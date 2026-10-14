@@ -88,7 +88,13 @@ def generate_llm_reply(
         return reply_text, needs_handoff, whatsapp_url
 
     except Exception as e:
-        print(f"⚠️ Error al llamar al LLM Gemini: {e}")
+        if isinstance(e, httpx.HTTPStatusError):
+            print(
+                f"⚠️ Gemini LLM HTTP {e.response.status_code} "
+                f"(modelo={settings.GEMINI_MODEL}): {e.response.text[:500]}"
+            )
+        else:
+            print(f"⚠️ Error al llamar al LLM Gemini: {e}")
         error_reply = (
             "Disculpa las molestias, experimentamos una interrupción momentánea. "
             "Te conectamos de inmediato con un asesor de ventas por WhatsApp para atender tu consulta."
