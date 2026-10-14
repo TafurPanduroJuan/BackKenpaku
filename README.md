@@ -123,7 +123,7 @@ kenpaku-backend/
    ```bash
    cp .env.example .env
    ```
-   Edita `.env` con tus credenciales (Supabase PostgreSQL, OpenAI API Key, JWT Secret).
+   Edita `.env` con tus credenciales (Supabase PostgreSQL, Gemini API Key, JWT Secret).
 
 4. **Ejecutar migraciones y semillado**:
    ```bash

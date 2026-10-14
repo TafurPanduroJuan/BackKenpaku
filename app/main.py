@@ -70,15 +70,23 @@ async def validation_exception_handler(
     request: Request, exc: RequestValidationError
 ):
     errors = exc.errors()
-    msg = errors[0].get("msg", "Error de validación") if errors else "Error de validación"
+    # Extraer todos los mensajes de error, no solo el primero
+    messages = []
+    for err in errors:
+        loc = " → ".join(str(l) for l in err.get("loc", []) if l != "body")
+        msg = err.get("msg", "Error de validación")
+        messages.append(f"{loc}: {msg}" if loc else msg)
+    detail = "; ".join(messages) if messages else "Error de validación en los datos enviados"
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={"detail": msg, "code": "VALIDATION_ERROR"},
+        content={"detail": detail, "code": "VALIDATION_ERROR"},
     )
 
 
 @app.exception_handler(Exception)
 async def generic_exception_handler(request: Request, exc: Exception):
+    import traceback
+    print(f"❌ Unhandled exception: {traceback.format_exc()}")
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={

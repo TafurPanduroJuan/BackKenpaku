@@ -13,13 +13,14 @@ from app.schemas.validators import (
 )
 
 class ClaimCreate(BaseModel):
+    model_config = ConfigDict(coerce_numbers_to_str=False)
     nombre: str = Field(..., min_length=2, max_length=150)
     documento: str = Field(..., min_length=8, max_length=20)
     telefono: str = Field(..., min_length=6, max_length=50)
     correo: EmailStr
     direccion: str = Field(..., min_length=5, max_length=200)
     tipo_bien: ClaimTipoBienEnum
-    monto_reclamado: Optional[Decimal] = Field(None, ge=0, le=Decimal("99999999.99"))
+    monto_reclamado: Optional[Decimal] = Field(None, ge=Decimal("0"), le=Decimal("99999999.99"))
     descripcion_bien: str = Field(..., min_length=3, max_length=500)
     tipo: ClaimTipoEnum
     detalle: str = Field(..., min_length=10, max_length=2000)
