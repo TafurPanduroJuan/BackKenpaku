@@ -1,7 +1,7 @@
 """phase5_cron
 
 Revision ID: 002
-Revises: None
+Revises: 001_initial
 Create Date: 2026-03-30 00:00:00.000000
 
 """
@@ -11,7 +11,7 @@ from sqlalchemy.engine.reflection import Inspector
 
 # revision identifiers, used by Alembic.
 revision = '002'
-down_revision = None
+down_revision = '001_initial'
 branch_labels = None
 depends_on = None
 
