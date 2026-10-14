@@ -13,7 +13,7 @@ from app.schemas.chat import ChatRequest, ChatResponse
 from app.schemas.product import ProductResponse, compute_stock_estado
 from app.services.anonymizer import anonymize_text
 from app.services.embeddings import get_embedding
-from app.services.llm_service import generate_llm_reply
+from app.services.llm_service import NO_MATCH_CONTEXT, generate_llm_reply
 from app.services.whatsapp import build_whatsapp_handoff_url
 
 
@@ -60,7 +60,7 @@ def process_chat_rag(db: Session, chat_in: ChatRequest) -> ChatResponse:
     Orquesta el flujo completo de RAG:
     1. Generación de embedding de la consulta.
     2. Búsqueda de productos más cercanos con pgvector (distancia coseno).
-    3. Si no hay coincidencias bajo el umbral -> Handoff inmediato sin llamar al LLM.
+    3. Si no hay coincidencias bajo el umbral -> se llama igual al LLM con contexto vacío (orientación general).
     4. Si hay productos -> Armado de contexto con datos en tiempo real (precio/stock), llamada al LLM con historial.
     5. Anonimización del mensaje de usuario y registro en chat_logs.
     """
@@ -69,8 +69,23 @@ def process_chat_rag(db: Session, chat_in: ChatRequest) -> ChatResponse:
     conversation_id = chat_in.conversation_id or uuid.uuid4()
     raw_message = chat_in.message.strip()
 
-    # 1. Generar embedding de la pregunta
-    query_vector = get_embedding(raw_message)
+    # Historial de la conversación (últimos 6 mensajes), necesario para entender seguimientos
+    past_logs = (
+        db.query(ChatLog)
+        .filter(ChatLog.id_conversacion == conversation_id)
+        .order_by(ChatLog.timestamp.asc())
+        .all()
+    )
+    history = [(log.rol.value, log.mensaje_texto) for log in past_logs[-6:]]
+
+    # 1. Generar embedding de la pregunta. Si es un mensaje corto de seguimiento
+    # ("de 20 metros de largo"), se le suma la consulta anterior del cliente para no perder el tema.
+    search_text = raw_message
+    if len(raw_message) < 60:
+        previous_user = [m for rol, m in history if rol == "user"]
+        if previous_user:
+            search_text = f"{previous_user[-1]} {raw_message}"
+    query_vector = get_embedding(search_text)
 
     # 2. Buscar productos activos
     active_products = db.query(Product).filter(Product.activo == True).all()
@@ -95,43 +110,8 @@ def process_chat_rag(db: Session, chat_in: ChatRequest) -> ChatResponse:
         prod for prod, dist in scored_products[:4] if dist <= settings.RAG_MAX_DISTANCE
     ]
 
-    # 3. REGLA: Si no hay productos relevantes -> HANDOFF directo sin llamar al LLM
-    if not relevant_products and not chat_in.product_id:
-        handoff_url = build_whatsapp_handoff_url(raw_message)
-        reply = (
-            "No encontré productos en nuestro catálogo de acero que coincidan exactamente con tu consulta. "
-            "Te conecto de inmediato con un asesor humano por WhatsApp para brindarte atención personalizada."
-        )
-
-        # Anonimizar y guardar log
-        anon_msg = anonymize_text(raw_message)
-        user_log = ChatLog(
-            id_conversacion=conversation_id,
-            rol=ChatRolEnum.user,
-            mensaje_texto=anon_msg,
-            longitud_mensaje=len(raw_message),
-            contiene_palabra_clave_producto=contains_product_keyword(raw_message),
-            intencion_etiquetada=classify_intention(raw_message),
-        )
-        assistant_log = ChatLog(
-            id_conversacion=conversation_id,
-            rol=ChatRolEnum.assistant,
-            mensaje_texto=reply,
-            longitud_mensaje=len(reply),
-            contiene_palabra_clave_producto=False,
-            intencion_etiquetada=None,
-        )
-        db.add_all([user_log, assistant_log])
-        db.commit()
-
-        return ChatResponse(
-            conversation_id=conversation_id,
-            reply=reply,
-            products=[],
-            handoff=True,
-            whatsapp_url=handoff_url,
-            generated_by_ai=True,
-        )
+    # 3. Si no hay productos relevantes NO se deriva de inmediato: el LLM igual orienta
+    # con conocimiento general e indica que eso no está en el catálogo por ahora.
 
     # Si se pasó un product_id específico y no estaba en relevantes, añadirlo
     if chat_in.product_id and not any(p.id == chat_in.product_id for p in relevant_products):
@@ -167,16 +147,7 @@ def process_chat_rag(db: Session, chat_in: ChatRequest) -> ChatResponse:
             )
         )
 
-    context_text = "\n".join(context_lines)
-
-    # Recuperar historial de los últimos 6 mensajes
-    past_logs = (
-        db.query(ChatLog)
-        .filter(ChatLog.id_conversacion == conversation_id)
-        .order_by(ChatLog.timestamp.asc())
-        .all()
-    )
-    history = [(log.rol.value, log.mensaje_texto) for log in past_logs[-6:]]
+    context_text = "\n".join(context_lines) if context_lines else NO_MATCH_CONTEXT
 
     # Llamar al LLM con el contexto e historial
     reply_text, handoff, whatsapp_url = generate_llm_reply(

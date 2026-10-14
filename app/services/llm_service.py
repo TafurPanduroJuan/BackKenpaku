@@ -9,6 +9,10 @@ from app.services.embeddings import GEMINI_BASE_URL
 from app.services.whatsapp import build_whatsapp_handoff_url
 
 
+# Marca que usa el RAG cuando ningún producto del catálogo coincide con la consulta.
+NO_MATCH_CONTEXT = "(Ningún producto del catálogo coincide con esta consulta.)"
+
+
 def _build_contents(
     chat_history: List[Tuple[str, str]], user_message: str
 ) -> List[dict]:
@@ -98,8 +102,17 @@ def generate_llm_reply(
     Llama a la API de Gemini pasando el system prompt, contexto de RAG e historial (últimos 6 mensajes).
     Retorna: (reply_text, handoff_boolean, whatsapp_url_or_none)
     """
+    user_history = [msg for rol, msg in chat_history if rol == "user"]
+
     if not settings.GEMINI_API_KEY:
         # Modo fallback sin API Key
+        if context_text == NO_MATCH_CONTEXT:
+            return (
+                "No encontré productos en nuestro catálogo que coincidan con tu consulta. "
+                "Te conecto con un asesor por WhatsApp para ayudarte.",
+                True,
+                build_whatsapp_handoff_url(user_query, user_history),
+            )
         reply = (
             f"Basado en nuestro catálogo de Comercial Kenpaku: {context_text}\n\n"
             "¿Deseas coordinar tu pedido o consultar sobre medidas específicas con nuestro equipo?"
@@ -136,7 +149,7 @@ def generate_llm_reply(
 
         needs_handoff = any(trigger in lower_reply for trigger in handoff_triggers)
         whatsapp_url = (
-            build_whatsapp_handoff_url(user_query) if needs_handoff else None
+            build_whatsapp_handoff_url(user_query, user_history) if needs_handoff else None
         )
 
         return reply_text, needs_handoff, whatsapp_url
@@ -153,5 +166,5 @@ def generate_llm_reply(
             "Disculpa las molestias, experimentamos una interrupción momentánea. "
             "Te conectamos de inmediato con un asesor de ventas por WhatsApp para atender tu consulta."
         )
-        whatsapp_url = build_whatsapp_handoff_url(user_query)
+        whatsapp_url = build_whatsapp_handoff_url(user_query, user_history)
         return error_reply, True, whatsapp_url
