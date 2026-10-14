@@ -1,3 +1,4 @@
+import time
 from typing import List, Tuple
 
 import httpx
@@ -20,6 +21,72 @@ def _build_contents(
         else:
             contents.append({"role": role_name, "parts": [{"text": msg}]})
     return contents
+
+# Códigos HTTP temporales de Gemini: vale la pena reintentar.
+_RETRY_STATUS = {429, 500, 503, 504}
+_MAX_ATTEMPTS = 3  # intentos por modelo
+_BACKOFF_SECONDS = (1, 3)  # espera entre intentos
+
+
+def _generation_config(model_name: str) -> dict:
+    config = {"temperature": 0.2, "maxOutputTokens": 1024}
+    # Los modelos "piensan" y esos tokens consumen maxOutputTokens: se reduce el razonamiento.
+    if "2.5" in model_name:
+        config["thinkingConfig"] = {"thinkingBudget": 0}
+    elif "gemini-3" in model_name:
+        config["thinkingConfig"] = {"thinkingLevel": "low"}
+    return config
+
+
+def _call_gemini(model_name: str, contents: List[dict]) -> dict:
+    """Llama a Gemini con reintentos ante errores temporales (503/429/timeouts)."""
+    last_error: Exception = RuntimeError("sin intentos")
+    for attempt in range(_MAX_ATTEMPTS):
+        try:
+            response = httpx.post(
+                f"{GEMINI_BASE_URL}/models/{model_name}:generateContent",
+                headers={"x-goog-api-key": settings.GEMINI_API_KEY},
+                json={
+                    "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT_KENPAKU}]},
+                    "contents": contents,
+                    "generationConfig": _generation_config(model_name),
+                },
+                timeout=20,
+            )
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            last_error = e
+            if e.response.status_code not in _RETRY_STATUS:
+                raise
+            print(
+                f"⚠️ Gemini HTTP {e.response.status_code} (modelo={model_name}), "
+                f"intento {attempt + 1}/{_MAX_ATTEMPTS}"
+            )
+        except (httpx.TimeoutException, httpx.TransportError) as e:
+            last_error = e
+            print(
+                f"⚠️ Gemini sin respuesta (modelo={model_name}), "
+                f"intento {attempt + 1}/{_MAX_ATTEMPTS}: {e}"
+            )
+        if attempt < _MAX_ATTEMPTS - 1:
+            time.sleep(_BACKOFF_SECONDS[attempt])
+    raise last_error
+
+
+def _call_with_fallback(contents: List[dict]) -> dict:
+    """Intenta con el modelo principal y, si sigue caído, con el de respaldo."""
+    try:
+        return _call_gemini(settings.GEMINI_MODEL, contents)
+    except Exception as primary_error:
+        fallback = settings.GEMINI_FALLBACK_MODEL
+        if not fallback or fallback == settings.GEMINI_MODEL:
+            raise
+        print(
+            f"⚠️ Modelo principal falló ({primary_error}); "
+            f"probando respaldo {fallback}"
+        )
+        return _call_gemini(fallback, contents)
 
 
 def generate_llm_reply(
@@ -45,29 +112,11 @@ def generate_llm_reply(
             f"CONSULTA DEL CLIENTE:\n{user_query}"
         )
 
-        generation_config = {"temperature": 0.2, "maxOutputTokens": 1024}
-        # Los modelos "piensan" y esos tokens consumen maxOutputTokens: se reduce el razonamiento.
-        model_name = settings.GEMINI_MODEL
-        if "2.5" in model_name:
-            # Gemini 2.5 usa thinkingBudget (0 = sin razonamiento)
-            generation_config["thinkingConfig"] = {"thinkingBudget": 0}
-        elif "gemini-3" in model_name:
-            # Gemini 3.x usa thinkingLevel
-            generation_config["thinkingConfig"] = {"thinkingLevel": "low"}
-
-        response = httpx.post(
-            f"{GEMINI_BASE_URL}/models/{settings.GEMINI_MODEL}:generateContent",
-            headers={"x-goog-api-key": settings.GEMINI_API_KEY},
-            json={
-                "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT_KENPAKU}]},
-                "contents": _build_contents(chat_history, user_message_with_context),
-                "generationConfig": generation_config,
-            },
-            timeout=20,
+        data = _call_with_fallback(
+            _build_contents(chat_history, user_message_with_context)
         )
-        response.raise_for_status()
 
-        parts = response.json()["candidates"][0]["content"]["parts"]
+        parts = data["candidates"][0]["content"]["parts"]
         reply_text = "".join(p.get("text", "") for p in parts).strip()
         if not reply_text:
             raise ValueError("Respuesta vacía de Gemini")

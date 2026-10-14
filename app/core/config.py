@@ -21,6 +21,7 @@ class Settings(BaseSettings):
 
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-3.8-flash"
+    GEMINI_FALLBACK_MODEL: str = "gemini-3.6-flash"  # vacío = sin respaldo
     GEMINI_EMBEDDING_MODEL: str = "gemini-embedding-001"
 
     JWT_SECRET: str = ""
