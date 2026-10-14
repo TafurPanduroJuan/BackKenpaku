@@ -6,21 +6,40 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from app.db.models import ClaimEstadoEnum, ClaimTipoBienEnum, ClaimTipoEnum
-
+from app.schemas.validators import (
+    validar_documento,
+    validar_nombre,
+    validar_telefono,
+)
 
 class ClaimCreate(BaseModel):
     nombre: str = Field(..., min_length=2, max_length=150)
     documento: str = Field(..., min_length=8, max_length=20)
     telefono: str = Field(..., min_length=6, max_length=50)
     correo: EmailStr
-    direccion: str = Field(..., min_length=5)
+    direccion: str = Field(..., min_length=5, max_length=200)
     tipo_bien: ClaimTipoBienEnum
-    monto_reclamado: Optional[Decimal] = Field(None, ge=0)
-    descripcion_bien: str = Field(..., min_length=3)
+    monto_reclamado: Optional[Decimal] = Field(None, ge=0, le=Decimal("99999999.99"))
+    descripcion_bien: str = Field(..., min_length=3, max_length=500)
     tipo: ClaimTipoEnum
-    detalle: str = Field(..., min_length=10)
-    pedido_consumidor: str = Field(..., min_length=5)
+    detalle: str = Field(..., min_length=10, max_length=2000)
+    pedido_consumidor: str = Field(..., min_length=5, max_length=1000)
     acepto_terminos: bool
+
+    @field_validator("nombre")
+    @classmethod
+    def check_nombre(cls, v: str) -> str:
+        return validar_nombre(v)
+
+    @field_validator("telefono")
+    @classmethod
+    def check_telefono(cls, v: str) -> str:
+        return validar_telefono(v)
+
+    @field_validator("documento")
+    @classmethod
+    def check_documento(cls, v: str) -> str:
+        return validar_documento(v)
 
     @field_validator("acepto_terminos")
     @classmethod

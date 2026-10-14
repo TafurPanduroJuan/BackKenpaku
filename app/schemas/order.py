@@ -4,26 +4,45 @@ from typing import List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
-
+from app.schemas.validators import (
+    limpiar_texto_opcional,
+    validar_nombre,
+    validar_telefono,
+)
 
 class ClienteInfo(BaseModel):
     nombre: str = Field(..., min_length=2, max_length=150)
     telefono: str = Field(..., min_length=6, max_length=50)
     correo: EmailStr
 
+    @field_validator("nombre")
+    @classmethod
+    def check_nombre(cls, v: str) -> str:
+        return validar_nombre(v)
+
+    @field_validator("telefono")
+    @classmethod
+    def check_telefono(cls, v: str) -> str:
+        return validar_telefono(v)
+
 
 class OrderItemCreate(BaseModel):
     product_id: UUID
-    cantidad: int = Field(..., gt=0)
+    cantidad: int = Field(..., gt=0, le=100000)
 
 
 class OrderCreate(BaseModel):
     cliente: ClienteInfo
-    direccion: Optional[str] = None
+    direccion: Optional[str] = Field(None, max_length=200)
     recojo_en_tienda: bool = False
-    observaciones: Optional[str] = None
+    observaciones: Optional[str] = Field(None, max_length=500)
     acepto_privacidad: bool
-    items: List[OrderItemCreate] = Field(..., min_length=1)
+    items: List[OrderItemCreate] = Field(..., min_length=1, max_length=50)
+
+    @field_validator("direccion", "observaciones")
+    @classmethod
+    def limpiar_textos(cls, v):
+        return limpiar_texto_opcional(v)
 
     @field_validator("acepto_privacidad")
     @classmethod
