@@ -40,3 +40,5 @@ services:
         value: "admin@kenpaku.pe"
       - key: ADMIN_PASSWORD
         sync: false
+      - key: CRON_SECRET
+        sync: false

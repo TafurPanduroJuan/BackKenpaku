@@ -14,8 +14,12 @@ jobs:
       - name: Invocar Endpoint Protegido de Automatización
         env:
           BACKEND_URL: ${{ secrets.BACKEND_URL || 'https://backkenpaku.onrender.com' }}
-          CRON_SECRET: ${{ secrets.CRON_SECRET || 'kenpaku-cron-secret-key-2026' }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
+          if [ -z "$CRON_SECRET" ]; then
+            echo "Error: falta el secreto CRON_SECRET en GitHub (Settings > Secrets and variables > Actions)."
+            exit 1
+          fi
           echo "Disparando cron de Comercial Kenpaku..."
           # Configuración de timeout de 120s para permitir que Render despierte si estaba inactivo
           HTTP_STATUS=$(curl -s -o response.json -w "%{http_code}" \
