@@ -1,6 +1,6 @@
 """fix_enum_and_missing_columns
 
-Revision ID: 003
+Revision ID: 003_fix_enum_and_missing_columns
 Revises: 002
 Create Date: 2026-04-01 00:00:00.000000
 
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from sqlalchemy.engine.reflection import Inspector
 
 # revision identifiers, used by Alembic.
-revision = '003'
+revision = '003_fix_enum_and_missing_columns'
 down_revision = '002'
 branch_labels = None
 depends_on = None
