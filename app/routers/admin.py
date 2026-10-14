@@ -558,15 +558,32 @@ def get_admin_chat_logs(
     db: Session = Depends(get_db),
     admin_user: User = Depends(get_current_admin_user),
 ):
-    """Consulta los registros del chat de asistencia para auditoría."""
-    query = db.query(ChatLog)
-    total = query.count()
-    items = (
-        query.order_by(ChatLog.timestamp.desc())
+    """Consulta los registros del chat de asistencia para auditoría.
+
+    La paginación es por CONVERSACIÓN (no por mensaje): cada página trae todos los mensajes
+    de las `page_size` conversaciones más recientes, para que ninguna quede cortada.
+    """
+    last_activity = func.max(ChatLog.timestamp)
+    total = db.query(func.count(func.distinct(ChatLog.id_conversacion))).scalar() or 0
+
+    conv_rows = (
+        db.query(ChatLog.id_conversacion)
+        .group_by(ChatLog.id_conversacion)
+        .order_by(last_activity.desc())
         .offset((page - 1) * page_size)
         .limit(page_size)
         .all()
     )
+    conv_ids = [row[0] for row in conv_rows]
+
+    items = []
+    if conv_ids:
+        items = (
+            db.query(ChatLog)
+            .filter(ChatLog.id_conversacion.in_(conv_ids))
+            .order_by(ChatLog.timestamp.desc())
+            .all()
+        )
     items_resp = [ChatLogResponse.model_validate(item) for item in items]
     return {"items": items_resp, "total": total, "page": page, "page_size": page_size}
 

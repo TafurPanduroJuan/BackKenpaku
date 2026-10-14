@@ -177,3 +177,33 @@ def test_admin_product_crud(client, db_session):
     # Verificar que el producto está inactivo en BD
     db_prod = db_session.query(Product).filter(Product.id == uuid.UUID(prod_id)).first()
     assert db_prod.activo is False
+
+
+def test_chat_logs_paginan_por_conversacion(client, db_session):
+    from datetime import datetime, timedelta, timezone
+    from app.db.models import ChatLog, ChatRolEnum
+
+    _, _, headers = seed_admin_and_product(db_session)
+    base = datetime.now(timezone.utc)
+    conv_ids = [uuid.uuid4() for _ in range(3)]
+    # 3 conversaciones de 4 mensajes cada una (12 mensajes en total)
+    for i, cid in enumerate(conv_ids):
+        for j in range(4):
+            db_session.add(
+                ChatLog(
+                    id_conversacion=cid,
+                    timestamp=base + timedelta(minutes=i * 10 + j),
+                    rol=ChatRolEnum.user if j % 2 == 0 else ChatRolEnum.assistant,
+                    mensaje_texto=f"msg {i}-{j}",
+                    longitud_mensaje=5,
+                )
+            )
+    db_session.commit()
+
+    resp = client.get("/api/admin/chat-logs?page=1&page_size=2", headers=headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total"] == 3  # conversaciones, no mensajes
+    got = {item["id_conversacion"] for item in data["items"]}
+    assert got == {str(conv_ids[2]), str(conv_ids[1])}  # las 2 más recientes, completas
+    assert len(data["items"]) == 8
