@@ -70,9 +70,10 @@ async def validation_exception_handler(
     request: Request, exc: RequestValidationError
 ):
     errors = exc.errors()
+    # Extraer todos los mensajes de error, no solo el primero
     messages = []
     for err in errors:
-        loc = " -> ".join(str(l) for l in err.get("loc", []) if l != "body")
+        loc = " → ".join(str(l) for l in err.get("loc", []) if l != "body")
         msg = err.get("msg", "Error de validación")
         messages.append(f"{loc}: {msg}" if loc else msg)
     detail = "; ".join(messages) if messages else "Error de validación en los datos enviados"
@@ -82,10 +83,11 @@ async def validation_exception_handler(
     )
 
 
+
 @app.exception_handler(Exception)
 async def generic_exception_handler(request: Request, exc: Exception):
     import traceback
-    print(f"❌ Error no controlado en {request.method} {request.url}: {traceback.format_exc()}")
+    print(f"❌ Unhandled exception on {request.method} {request.url}: {traceback.format_exc()}")
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={
@@ -105,7 +107,6 @@ app.include_router(claims.router)
 app.include_router(auth.router)
 app.include_router(admin.router)
 app.include_router(cron.router)
-
 
 @app.get("/", include_in_schema=False)
 def root():

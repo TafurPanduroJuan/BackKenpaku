@@ -1,56 +1,47 @@
-"""phase5_cron
 
-Revision ID: 002
-Revises: 001_initial
-Create Date: 2026-03-30 00:00:00.000000
-
-"""
+from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.engine.reflection import Inspector
 
-# revision identifiers, used by Alembic.
-revision = '002'
-down_revision = '001_initial'
-branch_labels = None
-depends_on = None
+revision: str = '002_phase5_cron'
+down_revision: Union[str, None] = '001_initial'
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    conn = op.get_bind()
-    inspector = Inspector.from_engine(conn)
-    existing_product_cols = [c['name'] for c in inspector.get_columns('products')]
-    existing_order_cols = [c['name'] for c in inspector.get_columns('orders')]
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
 
-    # Columna stock_reservado en products
-    if 'stock_reservado' not in existing_product_cols:
+    # --- products ---
+    product_cols = {col["name"] for col in inspector.get_columns("products")}
+    if "stock_reservado" not in product_cols:
         op.add_column(
             'products',
-            sa.Column('stock_reservado', sa.Integer(), nullable=False, server_default='0')
+            sa.Column('stock_reservado', sa.Integer(), server_default='0', nullable=False)
         )
 
-    # Columnas de timeout y recordatorios en orders
-    if 'fecha_limite_pago' not in existing_order_cols:
+    # --- orders ---
+    order_cols = {col["name"] for col in inspector.get_columns("orders")}
+    if "fecha_limite_pago" not in order_cols:
         op.add_column(
             'orders',
             sa.Column('fecha_limite_pago', sa.DateTime(timezone=True), nullable=True)
         )
-    if 'recordatorio_enviado' not in existing_order_cols:
+    if "recordatorio_enviado" not in order_cols:
         op.add_column(
             'orders',
-            sa.Column('recordatorio_enviado', sa.Boolean(), nullable=False, server_default='false')
+            sa.Column('recordatorio_enviado', sa.Boolean(), server_default='false', nullable=False)
+        )
+    if "stock_reservado" not in order_cols:
+        op.add_column(
+            'orders',
+            sa.Column('stock_reservado', sa.Boolean(), server_default='true', nullable=False)
         )
 
 
 def downgrade() -> None:
-    conn = op.get_bind()
-    inspector = Inspector.from_engine(conn)
-    existing_product_cols = [c['name'] for c in inspector.get_columns('products')]
-    existing_order_cols = [c['name'] for c in inspector.get_columns('orders')]
-
-    if 'recordatorio_enviado' in existing_order_cols:
-        op.drop_column('orders', 'recordatorio_enviado')
-    if 'fecha_limite_pago' in existing_order_cols:
-        op.drop_column('orders', 'fecha_limite_pago')
-    if 'stock_reservado' in existing_product_cols:
-        op.drop_column('products', 'stock_reservado')
+    op.drop_column('orders', 'stock_reservado')
+    op.drop_column('orders', 'recordatorio_enviado')
+    op.drop_column('orders', 'fecha_limite_pago')
+    op.drop_column('products', 'stock_reservado')
