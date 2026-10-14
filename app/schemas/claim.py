@@ -21,6 +21,15 @@ class ClaimCreate(BaseModel):
     direccion: str = Field(..., min_length=5, max_length=200)
     tipo_bien: ClaimTipoBienEnum
     monto_reclamado: Optional[Decimal] = Field(None, ge=Decimal("0"), le=Decimal("99999999.99"))
+    @field_validator("monto_reclamado", mode="before")
+    @classmethod
+    def coerce_monto(cls, v):
+        if v is None:
+            return None
+        try:
+            return Decimal(str(v))
+        except Exception:
+            raise ValueError("El monto debe ser un número válido.")
     descripcion_bien: str = Field(..., min_length=3, max_length=500)
     tipo: ClaimTipoEnum
     detalle: str = Field(..., min_length=10, max_length=2000)
