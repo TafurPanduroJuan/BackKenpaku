@@ -117,3 +117,45 @@ def test_whatsapp_handoff_url_includes_conversation_summary():
     text = unquote(url)
     assert "necesito 50 metros" in text
     assert "quiero hacer una cerca" in text and "de 2 m de alto" in text
+
+
+def test_chat_always_returns_whatsapp_url_even_without_handoff(client, db_session, monkeypatch):
+    """Toda respuesta del LLM trae whatsapp_url, aunque la IA no sugiera un asesor (handoff=False)."""
+    from app.core.config import settings
+    from app.services import llm_service
+
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", "fake-key")
+    monkeypatch.setattr(
+        llm_service,
+        "_call_with_fallback",
+        lambda contents: {"candidates": [{"content": {"parts": [{"text": "El tubo cuesta S/ 128.90."}]}}]},
+    )
+    seed_test_chat_product(db_session)
+
+    data = client.post("/api/chat", json={"message": 'Tienen tubo negro redondo de 2" de espesor 2mm?'}).json()
+    assert data["handoff"] is False
+    assert data["whatsapp_url"] and data["whatsapp_url"].startswith("https://wa.me/")
+
+
+def test_chat_general_query_does_not_return_products(client, db_session, monkeypatch):
+    """Una pregunta de contacto, aunque venga tras hablar de tubos, no debe devolver tarjetas de productos."""
+    from app.services import llm_service, rag_service
+
+    contexts = []
+
+    def fake_generate(query, context_text, history):
+        contexts.append(context_text)
+        return "respuesta de prueba", False, "https://wa.me/51987654321"
+
+    monkeypatch.setattr(rag_service, "generate_llm_reply", fake_generate)
+    seed_test_chat_product(db_session)
+
+    first = client.post("/api/chat", json={"message": 'Tienen tubo negro redondo de 2" de espesor 2mm?'}).json()
+    assert len(first["products"]) >= 1
+
+    second = client.post(
+        "/api/chat",
+        json={"conversation_id": first["conversation_id"], "message": "cuál es tu número de whatsapp?"},
+    ).json()
+    assert second["products"] == []
+    assert contexts[-1] == llm_service.GENERAL_CONTEXT

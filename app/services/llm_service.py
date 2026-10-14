@@ -11,6 +11,8 @@ from app.services.whatsapp import build_whatsapp_handoff_url
 
 # Marca que usa el RAG cuando ningún producto del catálogo coincide con la consulta.
 NO_MATCH_CONTEXT = "(Ningún producto del catálogo coincide con esta consulta.)"
+# Marca para consultas que no son de productos (contacto, saludo, horario, etc.).
+GENERAL_CONTEXT = "(Consulta general: no está asociada a ningún producto.)"
 
 
 def _build_contents(
@@ -106,7 +108,7 @@ def generate_llm_reply(
 
     if not settings.GEMINI_API_KEY:
         # Modo fallback sin API Key
-        if context_text == NO_MATCH_CONTEXT:
+        if context_text in (NO_MATCH_CONTEXT, GENERAL_CONTEXT):
             return (
                 "No encontré productos en nuestro catálogo que coincidan con tu consulta. "
                 "Te conecto con un asesor por WhatsApp para ayudarte.",
@@ -117,11 +119,12 @@ def generate_llm_reply(
             f"Basado en nuestro catálogo de Comercial Kenpaku: {context_text}\n\n"
             "¿Deseas coordinar tu pedido o consultar sobre medidas específicas con nuestro equipo?"
         )
-        return reply, False, None
+        return reply, False, build_whatsapp_handoff_url(user_query, user_history)
 
     try:
         user_message_with_context = (
             f"CONTEXTO DEL CATÁLOGO KENPAKU:\n{context_text}\n\n"
+            f"DATOS DE CONTACTO: WhatsApp de ventas: +{settings.WHATSAPP_NUMBER}\n\n"
             f"CONSULTA DEL CLIENTE:\n{user_query}"
         )
 
@@ -148,9 +151,9 @@ def generate_llm_reply(
         ]
 
         needs_handoff = any(trigger in lower_reply for trigger in handoff_triggers)
-        whatsapp_url = (
-            build_whatsapp_handoff_url(user_query, user_history) if needs_handoff else None
-        )
+        # El enlace de WhatsApp se entrega SIEMPRE, para que el cliente pueda continuar con un asesor
+        # si algo no quedó claro. `handoff` (que alerta al dueño por Telegram) solo se activa si la IA lo sugiere.
+        whatsapp_url = build_whatsapp_handoff_url(user_query, user_history)
 
         return reply_text, needs_handoff, whatsapp_url
 

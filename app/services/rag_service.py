@@ -1,4 +1,5 @@
 import math
+import re
 import time
 import uuid
 from typing import List, Tuple
@@ -13,7 +14,7 @@ from app.schemas.chat import ChatRequest, ChatResponse
 from app.schemas.product import ProductResponse, compute_stock_estado
 from app.services.anonymizer import anonymize_text
 from app.services.embeddings import get_embedding
-from app.services.llm_service import NO_MATCH_CONTEXT, generate_llm_reply
+from app.services.llm_service import GENERAL_CONTEXT, NO_MATCH_CONTEXT, generate_llm_reply
 from app.services.whatsapp import build_whatsapp_handoff_url
 
 
@@ -55,6 +56,19 @@ def contains_product_keyword(text: str) -> bool:
     return any(k in lower for k in keywords)
 
 
+_GENERAL_QUERY_RE = re.compile(
+    r"\b(whatsapp|wasap|wsp|n[uú]mero|tel[eé]fono|celular|contacto|horario|atienden|"
+    r"ubicaci[oó]n|direcci[oó]n|d[oó]nde est[aá]n|hola|buenas|buenos d[ií]as|buenas tardes|"
+    r"gracias|adi[oó]s|asesor|humano|persona)\b",
+    re.IGNORECASE,
+)
+
+
+def is_general_query(text: str) -> bool:
+    """Consulta que no trata de productos (contacto, saludo, horario...): no debe traer tarjetas de productos."""
+    return bool(_GENERAL_QUERY_RE.search(text)) and not contains_product_keyword(text)
+
+
 def process_chat_rag(db: Session, chat_in: ChatRequest) -> ChatResponse:
     """
     Orquesta el flujo completo de RAG:
@@ -78,31 +92,35 @@ def process_chat_rag(db: Session, chat_in: ChatRequest) -> ChatResponse:
     )
     history = [(log.rol.value, log.mensaje_texto) for log in past_logs[-6:]]
 
-    # 1. Generar embedding de la pregunta. Si es un mensaje corto de seguimiento
-    # ("de 20 metros de largo"), se le suma la consulta anterior del cliente para no perder el tema.
-    search_text = raw_message
-    if len(raw_message) < 60:
-        previous_user = [m for rol, m in history if rol == "user"]
-        if previous_user:
-            search_text = f"{previous_user[-1]} {raw_message}"
-    query_vector = get_embedding(search_text)
+    # Consultas generales (contacto, saludo, horario...) no buscan productos ni los muestran.
+    general_query = is_general_query(raw_message) and not chat_in.product_id
 
-    # 2. Buscar productos activos
-    active_products = db.query(Product).filter(Product.activo == True).all()
-
-    # Calcular distancia coseno para cada producto
     scored_products: List[Tuple[Product, float]] = []
-    for prod in active_products:
-        if prod.embedding and isinstance(prod.embedding, list):
-            dist = cosine_distance_python(query_vector, prod.embedding)
-        else:
-            # Fallback por coincidencia de texto en SQLite / sin embedding
-            lower_msg = raw_message.lower()
-            if prod.nombre.lower() in lower_msg or prod.categoria.value in lower_msg or (prod.medida and prod.medida.lower() in lower_msg):
-                dist = 0.2
+    if not general_query:
+        # 1. Generar embedding de la pregunta. Si es un mensaje corto de seguimiento
+        # ("de 20 metros de largo"), se le suma la consulta anterior del cliente para no perder el tema.
+        search_text = raw_message
+        if len(raw_message) < 60:
+            previous_user = [m for rol, m in history if rol == "user"]
+            if previous_user:
+                search_text = f"{previous_user[-1]} {raw_message}"
+        query_vector = get_embedding(search_text)
+
+        # 2. Buscar productos activos
+        active_products = db.query(Product).filter(Product.activo == True).all()
+
+        # Calcular distancia coseno para cada producto
+        for prod in active_products:
+            if prod.embedding and isinstance(prod.embedding, list):
+                dist = cosine_distance_python(query_vector, prod.embedding)
             else:
-                dist = 0.8
-        scored_products.append((prod, dist))
+                # Fallback por coincidencia de texto en SQLite / sin embedding
+                lower_msg = raw_message.lower()
+                if prod.nombre.lower() in lower_msg or prod.categoria.value in lower_msg or (prod.medida and prod.medida.lower() in lower_msg):
+                    dist = 0.2
+                else:
+                    dist = 0.8
+            scored_products.append((prod, dist))
 
     # Ordenar por menor distancia y filtrar por umbral máximo
     scored_products.sort(key=lambda x: x[1])
@@ -147,7 +165,7 @@ def process_chat_rag(db: Session, chat_in: ChatRequest) -> ChatResponse:
             )
         )
 
-    context_text = "\n".join(context_lines) if context_lines else NO_MATCH_CONTEXT
+    context_text = "\n".join(context_lines) if context_lines else (GENERAL_CONTEXT if general_query else NO_MATCH_CONTEXT)
 
     # Llamar al LLM con el contexto e historial
     reply_text, handoff, whatsapp_url = generate_llm_reply(
