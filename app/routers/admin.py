@@ -140,7 +140,7 @@ def _voucher_observado(order: Order) -> bool:
 def get_action_required(
     horas_aviso: int = Query(12, ge=1, le=48),
     db: Session = Depends(get_db),
-    admin_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(get_current_staff_user),
 ):
     """Pedidos y reclamos que requieren acción del administrador hoy."""
     abiertos = [OrderEstadoEnum.pendiente, OrderEstadoEnum.flete_cotizado]
