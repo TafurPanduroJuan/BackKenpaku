@@ -110,7 +110,7 @@ class OrderDetailResponse(BaseModel):
     codigo: str
     cliente_nombre: str
     cliente_telefono: str
-    cliente_correo: str
+    cliente_correo: Optional[str] = None
     direccion: Optional[str] = None
     recojo_en_tienda: bool
     observaciones: Optional[str] = None
