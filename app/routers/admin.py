@@ -21,7 +21,7 @@ from app.db.models import (
     User,
 )
 from app.db.session import get_db
-from app.routers.auth import get_current_admin_user
+from app.routers.auth import get_current_admin_user, get_current_staff_user
 from app.schemas.admin import (
     ActionOrderItem,
     ActionRequiredResponse,
@@ -250,7 +250,7 @@ def get_admin_orders(
     page: int = Query(1, ge=1),
     page_size: int = Query(12, ge=1, le=100),
     db: Session = Depends(get_db),
-    admin_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(get_current_staff_user),
 ):
     """Lista pedidos con paginación, filtro por estado y búsqueda por código o teléfono."""
     query = db.query(Order)
@@ -280,7 +280,7 @@ def get_admin_orders(
 def get_admin_order_by_id(
     order_id: UUID,
     db: Session = Depends(get_db),
-    admin_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(get_current_staff_user),
 ):
     """Obtiene el detalle completo de un pedido específico."""
     order = db.query(Order).filter(Order.id == order_id).first()
@@ -299,7 +299,7 @@ def update_order_status(
     status_in: OrderStatusUpdate,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    admin_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(get_current_staff_user),
 ):
     """
     Actualiza el estado de un pedido usando la máquina de estados centralizada.
@@ -317,7 +317,7 @@ def update_order_status(
         db=db,
         order=order,
         nuevo_estado_input=status_in.estado,
-        autor="admin",
+        autor=current_user.rol.value if current_user and current_user.rol else "admin",
         nota=status_in.nota,
         costo_flete=status_in.costo_flete,
     )

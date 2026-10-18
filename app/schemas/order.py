@@ -3,7 +3,14 @@ from decimal import Decimal
 from typing import List, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    field_validator,
+    model_validator,
+)
 from app.schemas.validators import (
     limpiar_texto_opcional,
     validar_nombre,
@@ -13,7 +20,7 @@ from app.schemas.validators import (
 class ClienteInfo(BaseModel):
     nombre: str = Field(..., min_length=2, max_length=150)
     telefono: str = Field(..., min_length=6, max_length=50)
-    correo: EmailStr
+    correo: Optional[EmailStr] = None
 
     @field_validator("nombre")
     @classmethod
@@ -33,6 +40,7 @@ class OrderItemCreate(BaseModel):
 
 class OrderCreate(BaseModel):
     cliente: ClienteInfo
+    canal: Optional[str] = Field("web", max_length=20)
     direccion: Optional[str] = Field(None, max_length=200)
     recojo_en_tienda: bool = False
     observaciones: Optional[str] = Field(None, max_length=500)
@@ -52,6 +60,14 @@ class OrderCreate(BaseModel):
                 "Debe aceptar la política de privacidad para procesar el pedido."
             )
         return v
+
+    @model_validator(mode="after")
+    def validate_canal_and_correo(self):
+        if self.canal == "web" and not self.cliente.correo:
+            raise ValueError(
+                "El correo electrónico es obligatorio para compras en la tienda virtual."
+            )
+        return self
 
 
 class OrderItemResponse(BaseModel):

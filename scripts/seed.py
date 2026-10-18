@@ -54,6 +54,28 @@ def seed_database():
             existing_admin.activo = True
             print(f"🔄 Administrador {admin_email} sincronizado con ADMIN_PASSWORD.")
 
+        # 1.1 Crear Usuario Cajero si no existe
+        cajero_email = "cajero@kenpaku.pe"
+        cajero_pass = "CajeroKenpaku2026!"
+        existing_cajero = (
+            db.query(User).filter(User.email == cajero_email).first()
+        )
+        if not existing_cajero:
+            cajero_user = User(
+                email=cajero_email,
+                password_hash=get_password_hash(cajero_pass),
+                rol=UserRolEnum.cajero,
+                activo=True,
+            )
+            db.add(cajero_user)
+            print(f"✅ Cajero de tienda creado: {cajero_email}")
+        else:
+            existing_cajero.password_hash = get_password_hash(cajero_pass)
+            existing_cajero.rol = UserRolEnum.cajero
+            existing_cajero.activo = True
+            print(f"🔄 Cajero {cajero_email} sincronizado.")
+        db.commit()
+
         # 2. Productos Iniciales de Acero
         products_data = [
             {

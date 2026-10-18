@@ -26,7 +26,7 @@ def get_password_hash(password: str) -> str:
 
 
 def create_access_token(
-    subject: str, expires_delta: Optional[timedelta] = None
+    subject: str, rol: Optional[str] = None, expires_delta: Optional[timedelta] = None
 ) -> str:
     """Crea un token de acceso JWT para el sujeto especificado."""
     if expires_delta:
@@ -41,6 +41,9 @@ def create_access_token(
         "exp": expire,
         "iat": datetime.now(timezone.utc),
     }
+    if rol:
+        to_encode["rol"] = str(rol)
+
     encoded_jwt = jwt.encode(
         to_encode, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM
     )

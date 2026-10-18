@@ -86,6 +86,7 @@ class ClaimEstadoEnum(str, enum.Enum):
 
 class UserRolEnum(str, enum.Enum):
     admin = "admin"
+    cajero = "cajero"
 
 
 class Product(Base):
@@ -122,7 +123,7 @@ class Order(Base):
     codigo = Column(String(20), unique=True, nullable=False, index=True)
     cliente_nombre = Column(String(150), nullable=False)
     cliente_telefono = Column(String(50), nullable=False)
-    cliente_correo = Column(String(150), nullable=False)
+    cliente_correo = Column(String(150), nullable=True)
     direccion = Column(Text, nullable=True)
     recojo_en_tienda = Column(Boolean, default=False, nullable=False)
     observaciones = Column(Text, nullable=True)
