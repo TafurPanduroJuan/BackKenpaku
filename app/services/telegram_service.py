@@ -56,18 +56,51 @@ def send_telegram_alert(text: str) -> dict:
 
 
 def format_new_order_telegram(order: Order) -> str:
-    """Formatea la alerta de nuevo pedido recibido para Telegram."""
-    modalidad = "Recojo en Almacén Puente Piedra" if order.recojo_en_tienda else "Despacho a Obra"
-    admin_url = f"{settings.FRONTEND_URL}/admin/pedidos"
+    """Formatea la alerta de nuevo pedido recibido (venta virtual) para Telegram."""
+    modalidad = (
+        "🏬 Recojo en Almacén Puente Piedra"
+        if order.recojo_en_tienda
+        else "🚚 Despacho a Obra"
+    )
+    caja_url = f"{settings.FRONTEND_URL}/caja/pedidos?codigo={order.codigo}"
+
+    dni_match = None
+    if getattr(order, "observaciones", None):
+        import re
+        m = re.search(r"\[DNI:\s*([0-9]{8})\]", order.observaciones)
+        if m:
+            dni_match = m.group(1)
+
+    dni_line = f"\n<b>DNI:</b> <code>{dni_match}</code>" if dni_match else ""
+    correo_line = (
+        f"\n<b>Correo:</b> {order.cliente_correo}"
+        if getattr(order, "cliente_correo", None)
+        else "\n<b>Correo:</b> <i>No registrado</i>"
+    )
+
+    direccion_line = ""
+    if not order.recojo_en_tienda and getattr(order, "direccion", None):
+        direccion_line = f"\n<b>Dirección:</b> {order.direccion}\n⚠️ <i>Requiere cotización de flete por caja.</i>"
+
+    items_block = ""
+    if hasattr(order, "items") and order.items:
+        items_block = "\n\n<b>📦 Ítems solicitados:</b>\n"
+        for item in order.items:
+            nombre = getattr(item, "nombre_snapshot", getattr(item, "nombre", "Producto"))
+            items_block += f"• {item.cantidad}x {nombre} — S/ {item.precio_unitario_snapshot:.2f}\n"
 
     return (
-        f"🚨 <b>¡NUEVO PEDIDO REGISTRADO!</b>\n\n"
+        f"🛒 <b>¡NUEVA VENTA VIRTUAL REGISTRADA!</b>\n\n"
         f"<b>Código:</b> <code>{order.codigo}</code>\n"
-        f"<b>Cliente:</b> {order.cliente_nombre}\n"
+        f"<b>Cliente:</b> {order.cliente_nombre}"
+        f"{dni_line}"
+        f"{correo_line}\n"
         f"<b>Teléfono:</b> {order.cliente_telefono}\n"
-        f"<b>Modalidad:</b> {modalidad}\n"
-        f"<b>Total:</b> S/ {order.total:.2f}\n\n"
-        f"👉 <a href='{admin_url}'>Abrir en Panel de Administración</a>"
+        f"<b>Modalidad:</b> {modalidad}"
+        f"{direccion_line}"
+        f"{items_block}\n"
+        f"<b>Total:</b> <b>S/ {order.total:.2f}</b>\n\n"
+        f"👉 <a href='{caja_url}'>Atender en Panel de Caja</a>"
     )
 
 
@@ -76,16 +109,23 @@ def format_order_status_telegram(
 ) -> str:
     """Formatea la alerta de cambio de estado de un pedido para Telegram."""
     estado_str = nuevo_estado.replace("_", " ").upper()
-    admin_url = f"{settings.FRONTEND_URL}/admin/pedidos"
+    caja_url = f"{settings.FRONTEND_URL}/caja/pedidos?codigo={order.codigo}"
     nota_str = f"\n<b>Nota:</b> {nota}" if nota else ""
+    correo_str = (
+        f"\n<b>Correo:</b> {order.cliente_correo}"
+        if getattr(order, "cliente_correo", None)
+        else ""
+    )
 
     return (
-        f"📦 <b>PEDIDO {order.codigo} ACTUALIZADO</b>\n\n"
+        f"📦 <b>VENTA VIRTUAL {order.codigo} - ESTADO ACTUALIZADO</b>\n\n"
         f"<b>Nuevo Estado:</b> <b>{estado_str}</b>\n"
-        f"<b>Cliente:</b> {order.cliente_nombre}\n"
+        f"<b>Cliente:</b> {order.cliente_nombre}"
+        f"{correo_str}\n"
+        f"<b>Teléfono:</b> {order.cliente_telefono}\n"
         f"<b>Total:</b> S/ {order.total:.2f}"
         f"{nota_str}\n\n"
-        f"👉 <a href='{admin_url}'>Ver en Panel de Administración</a>"
+        f"👉 <a href='{caja_url}'>Ver en Panel de Caja</a>"
     )
 
 

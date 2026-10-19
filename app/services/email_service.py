@@ -1,4 +1,7 @@
 import logging
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from typing import Optional
 import httpx
 
@@ -8,34 +11,17 @@ from app.db.models import Claim, Order
 logger = logging.getLogger(__name__)
 
 
-def send_email(
+def _send_brevo_email(
     to_email: str,
     to_name: str,
     subject: str,
     html_content: str,
 ) -> dict:
-    """
-    Envía un correo electrónico transaccional usando la API de Brevo.
-    Si BREVO_API_KEY no está configurada, opera en modo simulación (mock) sin fallar.
-    """
-    api_key = settings.BREVO_API_KEY
-
-    # Modo simulación seguro si no hay API key
-    if not api_key or not api_key.strip():
-        logger.info(
-            f"[EMAIL MOCK] Para: {to_email} ({to_name}) | Asunto: '{subject}' | Simulado con éxito."
-        )
-        return {
-            "status": "mock",
-            "success": True,
-            "to": to_email,
-            "subject": subject,
-            "message": "Correo simulado con éxito (BREVO_API_KEY no configurada en .env)",
-        }
-
+    """Envía correo electrónico vía API REST de Brevo."""
+    api_key = settings.BREVO_API_KEY.strip()
     url = "https://api.brevo.com/v3/smtp/email"
     headers = {
-        "api-key": api_key.strip(),
+        "api-key": api_key,
         "Content-Type": "application/json",
         "accept": "application/json",
     }
@@ -50,11 +36,11 @@ def send_email(
         with httpx.Client(timeout=10.0) as client:
             response = client.post(url, json=payload, headers=headers)
             if response.status_code in (200, 201, 202):
-                logger.info(f"[EMAIL ENVIADO] Brevo OK a {to_email}: {response.json()}")
-                return {"status": "sent", "success": True, "data": response.json()}
+                logger.info(f"[EMAIL ENVIADO BREVO] Brevo OK a {to_email}: {response.json()}")
+                return {"status": "sent", "success": True, "provider": "brevo", "data": response.json()}
             else:
                 logger.warning(
-                    f"[EMAIL ERROR] Brevo devolvió {response.status_code}: {response.text}"
+                    f"[EMAIL BREVO ERROR] Brevo devolvió {response.status_code}: {response.text}"
                 )
                 return {
                     "status": "error",
@@ -63,8 +49,84 @@ def send_email(
                     "detail": response.text,
                 }
     except Exception as e:
-        logger.error(f"[EMAIL EXCEPTION] Error al conectar con Brevo: {str(e)}")
+        logger.error(f"[EMAIL BREVO EXCEPTION] Error al conectar con Brevo: {str(e)}")
         return {"status": "exception", "success": False, "detail": str(e)}
+
+
+def _send_smtp_email(
+    to_email: str,
+    to_name: str,
+    subject: str,
+    html_content: str,
+) -> dict:
+    """Envía correo electrónico vía servidor SMTP (Gmail, Outlook, etc.)."""
+    host = settings.SMTP_HOST or "smtp.gmail.com"
+    port = settings.SMTP_PORT or 587
+    user = (settings.SMTP_USER or "").strip()
+    password = (settings.SMTP_PASSWORD or "").strip()
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    from_addr = user or settings.SENDER_EMAIL
+    msg["From"] = f"{settings.SENDER_NAME} <{from_addr}>"
+    msg["To"] = f"{to_name} <{to_email}>"
+
+    part = MIMEText(html_content, "html", "utf-8")
+    msg.attach(part)
+
+    try:
+        with smtplib.SMTP(host, port, timeout=12.0) as server:
+            if settings.SMTP_USE_TLS:
+                server.starttls()
+            server.login(user, password)
+            server.send_message(msg)
+            logger.info(f"[EMAIL ENVIADO SMTP] Correo enviado a {to_email} vía {host}")
+            return {
+                "status": "sent",
+                "success": True,
+                "provider": "smtp",
+                "to": to_email,
+            }
+    except Exception as e:
+        logger.error(f"[EMAIL SMTP ERROR] Fallo al enviar vía SMTP a {to_email}: {e}")
+        return {"status": "exception", "success": False, "detail": str(e)}
+
+
+def send_email(
+    to_email: str,
+    to_name: str,
+    subject: str,
+    html_content: str,
+) -> dict:
+    """
+    Envía un correo electrónico transaccional.
+    1. Si BREVO_API_KEY está configurada, utiliza la API de Brevo.
+    2. Si SMTP_USER y SMTP_PASSWORD están configurados, utiliza SMTP (ej. Gmail).
+    3. Si ninguna está configurada, opera en modo simulación (mock) sin fallar.
+    """
+    api_key = settings.BREVO_API_KEY
+    if api_key and api_key.strip():
+        return _send_brevo_email(to_email, to_name, subject, html_content)
+
+    if (
+        settings.SMTP_USER
+        and settings.SMTP_USER.strip()
+        and settings.SMTP_PASSWORD
+        and settings.SMTP_PASSWORD.strip()
+    ):
+        return _send_smtp_email(to_email, to_name, subject, html_content)
+
+    # Modo simulación seguro si no hay proveedor configurado
+    logger.info(
+        f"[EMAIL MOCK] Para: {to_email} ({to_name}) | Asunto: '{subject}' | Simulado con éxito."
+    )
+    return {
+        "status": "mock",
+        "success": True,
+        "to": to_email,
+        "subject": subject,
+        "message": "Correo simulado con éxito (BREVO_API_KEY ni SMTP configurados en .env)",
+    }
 
 
 def render_order_email_html(

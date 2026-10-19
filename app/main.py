@@ -1,3 +1,4 @@
+# Comercial Kenpaku S.A.C. API - Notificaciones Brevo y Telegram Activas
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware

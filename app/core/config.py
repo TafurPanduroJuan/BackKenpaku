@@ -44,7 +44,14 @@ class Settings(BaseSettings):
     SENDER_NAME: str = "Comercial Kenpaku S.A.C."
     TELEGRAM_BOT_TOKEN: Union[str, None] = None
     TELEGRAM_CHAT_ID: Union[str, None] = None
-    FRONTEND_URL: str = "http://localhost:5173"
+    FRONTEND_URL: str = "http://localhost:3000"
+
+    # SMTP alternativo (Gmail, Outlook o hosting)
+    SMTP_HOST: Union[str, None] = "smtp.gmail.com"
+    SMTP_PORT: int = 587
+    SMTP_USER: Union[str, None] = None
+    SMTP_PASSWORD: Union[str, None] = None
+    SMTP_USE_TLS: bool = True
 
     # Almacenamiento de Comprobantes / Vouchers (Fase 4: Supabase Storage + Fallback Local)
     SUPABASE_URL: Union[str, None] = None

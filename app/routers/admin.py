@@ -7,6 +7,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.services.notification_service import notify_order_status_changed
+from app.services.telegram_service import send_telegram_alert
 
 from app.db.models import (
     ChatLog,
@@ -379,6 +380,12 @@ def validate_order_voucher(
         db.add(event)
         db.commit()
         db.refresh(order)
+        background_tasks.add_task(
+            notify_order_status_changed,
+            order,
+            order.estado.value,
+            f"Comprobante observado por caja: {motivo}. Favor acceder a su enlace de seguimiento y cargar un nuevo comprobante.",
+        )
         return build_order_detail_response(order)
 
 
@@ -633,4 +640,25 @@ def reindex_knowledge_base(
         "detail": f"Se reindexaron {count} productos activos con éxito.",
         "code": "SUCCESS",
         "total_reindexed": count,
+    }
+
+
+@router.post("/test-telegram")
+def test_telegram_connection(
+    admin_user: User = Depends(get_current_staff_user),
+):
+    """
+    Envía un mensaje de prueba al bot de Telegram configurado en .env.
+    Permite validar de forma instantánea si el Bot Token y Chat ID están operativos.
+    """
+    test_msg = (
+        "🤖 <b>Comercial Kenpaku S.A.C. — Notificaciones</b>\n\n"
+        "✅ <b>Conexión con el Bot de Telegram exitosa.</b>\n"
+        "A partir de este momento, recibirás aquí todas las alertas instantáneas "
+        "de nuevas ventas virtuales, cotizaciones de flete y comprobantes de pago."
+    )
+    result = send_telegram_alert(test_msg)
+    return {
+        "detail": "Prueba de Telegram ejecutada.",
+        "telegram_result": result,
     }

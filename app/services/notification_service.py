@@ -1,6 +1,7 @@
 import logging
 from typing import Optional
 
+from app.core.config import settings
 from app.db.models import Claim, Order
 from app.services.email_service import (
     render_claim_email_html,
@@ -136,24 +137,27 @@ def notify_flete_decision(order: Order, decision: str, nota: Optional[str] = Non
     Notifica al dueño cuando el cliente acepta o rechaza la cotización del flete a obra.
     """
     results = {}
+    caja_url = f"{settings.FRONTEND_URL}/caja/pedidos?codigo={order.codigo}"
     try:
         if decision == "aceptado":
             msg = (
-                f"🚚 *FLETE ACEPTADO POR EL CLIENTE*\n\n"
-                f"Pedido: `{order.codigo}`\n"
-                f"Cliente: {order.cliente_nombre} ({order.cliente_telefono})\n"
-                f"Costo Flete: *S/ {order.costo_flete:.2f}*\n"
-                f"Total a pagar: *S/ {order.total:.2f}*\n\n"
-                f"👉 El cliente procederá con el pago y la carga de su voucher."
+                f"🚚 <b>FLETE ACEPTADO POR EL CLIENTE</b>\n\n"
+                f"<b>Pedido:</b> <code>{order.codigo}</code>\n"
+                f"<b>Cliente:</b> {order.cliente_nombre} ({order.cliente_telefono})\n"
+                f"<b>Costo Flete Aceptado:</b> S/ {order.costo_flete:.2f}\n"
+                f"<b>Total a Pagar:</b> S/ {order.total:.2f}\n\n"
+                f"👉 <i>El cliente procederá con el pago y la carga de su comprobante.</i>\n\n"
+                f"🔗 <a href='{caja_url}'>Ver Pedido en Caja</a>"
             )
         else:
             msg = (
-                f"⚠️ *FLETE RECHAZADO POR EL CLIENTE*\n\n"
-                f"Pedido: `{order.codigo}`\n"
-                f"Cliente: {order.cliente_nombre} ({order.cliente_telefono})\n"
-                f"Flete cotizado: *S/ {order.costo_flete:.2f}*\n"
-                f"Nota/Motivo: {nota or 'Sin especificar'}\n\n"
-                f"👉 Coordinar nuevo flete o recojo en almacén vía WhatsApp."
+                f"⚠️ <b>FLETE RECHAZADO POR EL CLIENTE</b>\n\n"
+                f"<b>Pedido:</b> <code>{order.codigo}</code>\n"
+                f"<b>Cliente:</b> {order.cliente_nombre} ({order.cliente_telefono})\n"
+                f"<b>Flete Cotizado:</b> S/ {order.costo_flete:.2f}\n"
+                f"<b>Motivo:</b> {nota or 'Sin especificar'}\n\n"
+                f"👉 <i>Coordinar nuevo flete o cambio a recojo en almacén vía WhatsApp.</i>\n\n"
+                f"🔗 <a href='{caja_url}'>Ver Pedido en Caja</a>"
             )
         results["telegram"] = send_telegram_alert(msg)
     except Exception as e:
@@ -168,14 +172,16 @@ def notify_voucher_uploaded(order: Order, filename: str) -> dict:
     Notifica al dueño cuando el cliente sube un voucher de pago para su pedido.
     """
     results = {}
+    caja_url = f"{settings.FRONTEND_URL}/caja/pedidos?codigo={order.codigo}"
     try:
         msg = (
-            f"💳 *NUEVO VOUCHER DE PAGO SUBIDO*\n\n"
-            f"Pedido: `{order.codigo}`\n"
-            f"Cliente: {order.cliente_nombre} ({order.cliente_telefono})\n"
-            f"Total a verificar: *S/ {order.total:.2f}*\n"
-            f"Archivo recibido: `{filename}`\n\n"
-            f"👉 Ingresa al panel de administración para validar el depósito y confirmar el pedido."
+            f"💳 <b>NUEVO COMPROBANTE DE PAGO SUBIDO</b>\n\n"
+            f"<b>Pedido:</b> <code>{order.codigo}</code>\n"
+            f"<b>Cliente:</b> {order.cliente_nombre} ({order.cliente_telefono})\n"
+            f"<b>Total a Verificar:</b> S/ {order.total:.2f}\n"
+            f"<b>Archivo:</b> <code>{filename}</code>\n\n"
+            f"👉 <i>Ingresa a caja para validar el comprobante y confirmar la venta.</i>\n\n"
+            f"🔗 <a href='{caja_url}'>Validar Comprobante en Caja</a>"
         )
         results["telegram"] = send_telegram_alert(msg)
     except Exception as e:
