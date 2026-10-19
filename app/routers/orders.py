@@ -126,6 +126,8 @@ def create_order(
         id=order.id,
         codigo=order.codigo,
         estado=order.estado.value,
+        recojo_en_tienda=order.recojo_en_tienda,
+        direccion=order.direccion,
         subtotal=order.subtotal,
         igv=order.igv,
         total=order.total,

@@ -93,6 +93,8 @@ class OrderResponse(BaseModel):
     id: UUID
     codigo: str
     estado: str
+    recojo_en_tienda: bool = False
+    direccion: Optional[str] = None
     subtotal: Decimal
     igv: Decimal
     total: Decimal
