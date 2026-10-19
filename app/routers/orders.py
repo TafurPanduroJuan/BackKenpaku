@@ -295,7 +295,10 @@ async def upload_order_voucher(
 
     file_url, saved_filename = upload_voucher_file(file_bytes, file.filename or "voucher.png", content_type)
 
-    order.voucher_referencia = file_url
+    existing_vouchers = [v.strip() for v in (order.voucher_referencia or "").split(",") if v.strip()]
+    if file_url not in existing_vouchers:
+        existing_vouchers.append(file_url)
+    order.voucher_referencia = ",".join(existing_vouchers)
     order.fecha_pago = datetime.now(timezone.utc)
     if order.estado_flete == "cotizado":
         order.estado_flete = "aceptado"
