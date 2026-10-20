@@ -249,7 +249,7 @@ def get_admin_orders(
         None, min_length=2, max_length=50, description="Buscar por código o teléfono"
     ),
     page: int = Query(1, ge=1),
-    page_size: int = Query(12, ge=1, le=100),
+    page_size: int = Query(12, ge=1, le=1000),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_staff_user),
 ):
