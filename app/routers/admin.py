@@ -1,3 +1,4 @@
+import re
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from uuid import UUID
@@ -34,6 +35,7 @@ from app.schemas.order import (
     OrderDetailResponse,
     OrderEventResponse,
     OrderItemResponse,
+    OrderPaymentMethodUpdate,
     OrderStatusUpdate,
     VoucherValidationRequest,
 )
@@ -339,11 +341,12 @@ def validate_order_voucher(
     validation_in: VoucherValidationRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    admin_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(get_current_staff_user),
 ):
     """
-    Permite al administrador aprobar o rechazar el comprobante de pago subido.
+    Permite al administrador o cajero aprobar o rechazar el comprobante de pago subido.
     - Si se aprueba: El pedido pasa a 'confirmado' y se descuenta el stock de almacén.
+    - Puede confirmar o corregir el medio de pago real verificado (Yape, BCP, Interbank, Efectivo).
     - Si se rechaza: Se registra la observación en el historial para subsanación del cliente.
     """
     order = db.query(Order).filter(Order.id == order_id).first()
@@ -353,19 +356,40 @@ def validate_order_voucher(
             detail={"detail": "Pedido no encontrado.", "code": "NOT_FOUND"},
         )
 
+    metodo_clean = None
+    if validation_in.metodo_pago:
+        metodo_map = {
+            "yape": "Yape",
+            "bcp": "Transferencia BCP",
+            "interbank": "Transferencia Interbank",
+            "efectivo": "Efectivo",
+        }
+        metodo_clean = metodo_map.get(validation_in.metodo_pago.lower(), validation_in.metodo_pago.strip())
+        obs_actual = order.observaciones or ""
+        obs_limpia = re.sub(r"\[PAGO[^\]]*\]", "", obs_actual).strip()
+        order.observaciones = f"{obs_limpia} [PAGO: {metodo_clean}]".strip()
+
+    autor_str = current_user.rol.value if current_user and current_user.rol else "cajero"
+
     if validation_in.aprobado:
+        nota_default = (
+            f"Pago validado por caja tras revisión de voucher vía {metodo_clean}."
+            if metodo_clean
+            else "Pago validado por caja tras revisión de voucher."
+        )
+        nota_final = validation_in.nota or nota_default
         updated_order = transition_order_status(
             db=db,
             order=order,
             nuevo_estado_input="confirmado",
-            autor="admin",
-            nota=validation_in.nota or "Pago validado por caja tras revisión de voucher.",
+            autor=autor_str,
+            nota=nota_final,
         )
         background_tasks.add_task(
             notify_order_status_changed,
             updated_order,
             "confirmado",
-            validation_in.nota or "Pago validado por caja tras revisión de voucher.",
+            nota_final,
         )
         return build_order_detail_response(updated_order)
     else:
@@ -374,7 +398,7 @@ def validate_order_voucher(
             order_id=order.id,
             estado_anterior=order.estado.value,
             estado_nuevo=order.estado.value,
-            autor="admin",
+            autor=autor_str,
             nota=f"Comprobante observado por caja: {motivo}. Favor cargar nuevo voucher.",
         )
         db.add(event)
@@ -387,6 +411,49 @@ def validate_order_voucher(
             f"Comprobante observado por caja: {motivo}. Favor acceder a su enlace de seguimiento y cargar un nuevo comprobante.",
         )
         return build_order_detail_response(order)
+
+
+@router.put("/orders/{order_id}/metodo-pago", response_model=OrderDetailResponse)
+def update_order_payment_method(
+    order_id: UUID,
+    payment_in: OrderPaymentMethodUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_staff_user),
+):
+    """
+    Permite al cajero o administrador confirmar o corregir el medio de pago de una venta.
+    """
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"detail": "Pedido no encontrado.", "code": "NOT_FOUND"},
+        )
+
+    metodo_map = {
+        "yape": "Yape",
+        "bcp": "Transferencia BCP",
+        "interbank": "Transferencia Interbank",
+        "efectivo": "Efectivo",
+    }
+    metodo_clean = metodo_map.get(payment_in.metodo_pago.lower(), payment_in.metodo_pago.strip())
+    obs_actual = order.observaciones or ""
+    obs_limpia = re.sub(r"\[PAGO[^\]]*\]", "", obs_actual).strip()
+    order.observaciones = f"{obs_limpia} [PAGO: {metodo_clean}]".strip()
+
+    autor_str = current_user.rol.value if current_user and current_user.rol else "cajero"
+    event_nota = payment_in.nota or f"Medio de pago verificado/ajustado por {autor_str} a: {metodo_clean}."
+    event = OrderEvent(
+        order_id=order.id,
+        estado_anterior=order.estado.value,
+        estado_nuevo=order.estado.value,
+        autor=autor_str,
+        nota=event_nota,
+    )
+    db.add(event)
+    db.commit()
+    db.refresh(order)
+    return build_order_detail_response(order)
 
 
 # ==================== GESTIÓN DE PRODUCTOS (ADMIN) ====================

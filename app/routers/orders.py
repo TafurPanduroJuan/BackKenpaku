@@ -9,6 +9,7 @@ from fastapi import (
     BackgroundTasks,
     Depends,
     File,
+    Form,
     HTTPException,
     Query,
     UploadFile,
@@ -263,6 +264,7 @@ def submit_flete_decision(
 async def upload_order_voucher(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    metodo_pago: Optional[str] = Form(None),
     token: Optional[str] = Query(None),
     codigo: Optional[str] = Query(None),
     telefono: Optional[str] = Query(None),
@@ -305,12 +307,26 @@ async def upload_order_voucher(
     if order.estado_flete == "cotizado":
         order.estado_flete = "aceptado"
 
+    metodo_label = ""
+    if metodo_pago:
+        metodo_map = {
+            "yape": "Yape",
+            "bcp": "Transferencia BCP",
+            "interbank": "Transferencia Interbank",
+            "efectivo": "Efectivo",
+        }
+        metodo_clean = metodo_map.get(metodo_pago.lower(), metodo_pago.strip())
+        metodo_label = f" declarado vía {metodo_clean}"
+        obs_actual = order.observaciones or ""
+        obs_limpia = re.sub(r"\[PAGO DECLARADO:[^\]]*\]", "", obs_actual).strip()
+        order.observaciones = f"{obs_limpia} [PAGO DECLARADO: {metodo_clean}]".strip()
+
     event = OrderEvent(
         order_id=order.id,
         estado_anterior=order.estado.value,
         estado_nuevo=order.estado.value,
         autor="cliente",
-        nota=f"Comprobante de pago cargado ({saved_filename}). En proceso de verificación por caja.",
+        nota=f"Comprobante de pago{metodo_label} cargado ({saved_filename}). En proceso de verificación por caja.",
     )
     db.add(event)
     db.commit()

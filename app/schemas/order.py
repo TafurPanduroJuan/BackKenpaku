@@ -150,6 +150,7 @@ class FleteDecisionRequest(BaseModel):
 class VoucherValidationRequest(BaseModel):
     aprobado: bool  # True para aprobar el pago, False para rechazar o pedir reenviar
     nota: Optional[str] = None
+    metodo_pago: Optional[str] = None  # 'yape', 'bcp', 'interbank', 'efectivo'
 
 
 class OrderPublicEventResponse(BaseModel):
@@ -181,5 +182,10 @@ class OrderPublicTrackingResponse(BaseModel):
     recordatorio_enviado: bool = False
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class OrderPaymentMethodUpdate(BaseModel):
+    metodo_pago: str
+    nota: Optional[str] = None
 
 
