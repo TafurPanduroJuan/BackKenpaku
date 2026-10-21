@@ -117,7 +117,17 @@ def transition_order_status(
         if costo_flete is not None and costo_flete >= Decimal("0.00"):
             order.costo_flete = round_money(costo_flete)
             order.estado_flete = "cotizado"
-            order.total = round_money(order.subtotal + order.igv + order.costo_flete)
+            if order.items:
+                total_productos = sum(
+                    round_money(Decimal(str(it.precio_unitario_snapshot)) * Decimal(str(it.cantidad)))
+                    for it in order.items
+                )
+            else:
+                total_productos = round_money(order.total)
+            order.total = round_money(total_productos + order.costo_flete)
+            # SUNAT Opción 1: El flete cotizado incluye IGV (Op. Gravada e IGV recalculados sobre el total final)
+            order.subtotal = round_money(order.total / Decimal("1.18"))
+            order.igv = round_money(order.total - order.subtotal)
             if not nota:
                 nota = f"Flete cotizado por S/ {order.costo_flete:.2f}"
 
