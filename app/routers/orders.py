@@ -35,7 +35,11 @@ from app.services.notification_service import (
     notify_order_created,
     notify_voucher_uploaded,
 )
-from app.services.order_service import create_order_service
+from app.services.order_service import (
+    create_order_service,
+    extract_order_payment_method,
+    extract_order_document_info,
+)
 from app.services.storage_service import ALLOWED_MIME_TYPES, upload_voucher_file
 
 router = APIRouter(prefix="/api/orders", tags=["Orders"])
@@ -123,6 +127,7 @@ def create_order(
         for item in order.items
     ]
 
+    metodo_clean = extract_order_payment_method(order)
     return OrderResponse(
         id=order.id,
         codigo=order.codigo,
@@ -137,6 +142,11 @@ def create_order(
         tracking_token=order.tracking_token,
         items=items_resp,
         whatsapp_url=whatsapp_url,
+        cliente_nombre=order.cliente_nombre,
+        cliente_telefono=order.cliente_telefono,
+        cliente_correo=order.cliente_correo,
+        observaciones=order.observaciones,
+        metodo_pago=metodo_clean,
     )
 
 
@@ -179,6 +189,9 @@ def get_order_public_tracking(
     wa_msg = quote(f"¡Hola Comercial Kenpaku! Consulto por el estado de mi pedido *{order.codigo}*.")
     wa_url = f"https://wa.me/{settings.WHATSAPP_NUMBER}?text={wa_msg}"
 
+    metodo_clean = extract_order_payment_method(order)
+    comprobante_tipo, doc_num = extract_order_document_info(order)
+
     return OrderPublicTrackingResponse(
         codigo=order.codigo,
         estado=order.estado.value,
@@ -194,8 +207,13 @@ def get_order_public_tracking(
         events=events_resp,
         whatsapp_url=wa_url,
         cliente_resumen=mask_client_name(order.cliente_nombre),
+        doc_numero=doc_num,
+        comprobante_tipo=comprobante_tipo,
+        metodo_pago=metodo_clean,
         voucher_referencia=order.voucher_referencia,
         fecha_pago=order.fecha_pago,
+        fecha_limite_pago=order.fecha_limite_pago,
+        recordatorio_enviado=order.recordatorio_enviado,
     )
 
 

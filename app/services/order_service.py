@@ -1,3 +1,4 @@
+import re
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 import secrets
@@ -336,3 +337,86 @@ def create_order_service(db: Session, order_in: OrderCreate) -> Tuple[Order, str
     )
 
     return order, whatsapp_url
+
+
+def extract_order_payment_method(order: Order) -> str:
+    """
+    Extrae y normaliza el medio de pago del pedido priorizando:
+    1. Ajustes o verificaciones de caja en observaciones [PAGO: ...]
+    2. Historial de eventos de auditoría (OrderEvent)
+    3. Declaración del cliente en observaciones [PAGO DECLARADO: ...]
+    4. Palabras clave directas en observaciones
+    5. Referencia de voucher / fecha de pago
+    6. Canal de venta (pos_tienda -> Efectivo, web -> Transferencia BCP)
+    """
+    obs = (order.observaciones or "").upper()
+
+    # 1. Etiquetas de caja confirmadas
+    if "[PAGO: YAPE]" in obs or "PAGO: YAPE" in obs:
+        return "Yape"
+    if "[PAGO: TRANSFERENCIA INTERBANK]" in obs or "PAGO: INTERBANK" in obs:
+        return "Transferencia Interbank"
+    if "[PAGO: TRANSFERENCIA BCP]" in obs or "PAGO: BCP" in obs:
+        return "Transferencia BCP"
+    if "[PAGO: EFECTIVO]" in obs or "PAGO: EFECTIVO" in obs:
+        return "Efectivo"
+
+    # 2. Historial de eventos de caja (en orden cronológico inverso)
+    for ev in reversed(order.events or []):
+        nota_up = (ev.nota or "").upper()
+        if "MEDIO DE PAGO" in nota_up or "AJUSTADO" in nota_up or "VERIFICADO" in nota_up:
+            if "INTERBANK" in nota_up:
+                return "Transferencia Interbank"
+            if "BCP" in nota_up:
+                return "Transferencia BCP"
+            if "YAPE" in nota_up or "PLIN" in nota_up:
+                return "Yape"
+            if "EFECTIVO" in nota_up:
+                return "Efectivo"
+
+    # 3. Etiquetas de declaración de cliente
+    if "PAGO DECLARADO: YAPE" in obs:
+        return "Yape"
+    if "PAGO DECLARADO: INTERBANK" in obs:
+        return "Transferencia Interbank"
+    if "PAGO DECLARADO: BCP" in obs:
+        return "Transferencia BCP"
+
+    # 4. Palabras clave directas en observaciones
+    if "INTERBANK" in obs:
+        return "Transferencia Interbank"
+    if "BCP" in obs:
+        return "Transferencia BCP"
+    if "YAPE" in obs or "PLIN" in obs:
+        return "Yape"
+    if "EFECTIVO" in obs:
+        return "Efectivo"
+
+    # 5. Voucher o fecha de pago
+    if getattr(order, "voucher_referencia", None) or getattr(order, "fecha_pago", None):
+        return "Transferencia BCP"
+
+    canal = getattr(order, "canal", None)
+    if canal == "pos_tienda" or "MOSTRADOR" in obs:
+        return "Efectivo"
+
+    return "Transferencia BCP"
+
+
+def extract_order_document_info(order: Order) -> Tuple[str, Optional[str]]:
+    """Extrae el tipo de comprobante ('boleta' o 'factura') y el número de documento del pedido."""
+    obs = (order.observaciones or "").upper()
+    is_factura = "FACTURA" in obs or "RUC" in obs
+    comprobante_tipo = "factura" if is_factura else "boleta"
+
+    doc_num = None
+    match_doc = re.search(
+        r"(?:DOC:\s*(?:RUC|DNI)?|Doc:\s*|DNI:\s*|RUC:\s*)([0-9A-Za-z]+)",
+        order.observaciones or "",
+        re.IGNORECASE,
+    )
+    if match_doc:
+        doc_num = match_doc.group(1)
+
+    return comprobante_tipo, doc_num
+

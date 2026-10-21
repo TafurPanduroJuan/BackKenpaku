@@ -103,6 +103,11 @@ class OrderResponse(BaseModel):
     tracking_token: Optional[str] = None
     items: List[OrderItemResponse]
     whatsapp_url: str
+    cliente_nombre: Optional[str] = None
+    cliente_telefono: Optional[str] = None
+    cliente_correo: Optional[str] = None
+    observaciones: Optional[str] = None
+    metodo_pago: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -132,6 +137,9 @@ class OrderDetailResponse(BaseModel):
     created_at: datetime
     items: List[OrderItemResponse]
     events: List[OrderEventResponse] = []
+    metodo_pago: Optional[str] = None
+    comprobante_tipo: Optional[str] = None
+    doc_numero: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -176,6 +184,9 @@ class OrderPublicTrackingResponse(BaseModel):
     events: List[OrderPublicEventResponse] = []
     whatsapp_url: Optional[str] = None
     cliente_resumen: Optional[str] = None
+    doc_numero: Optional[str] = None
+    comprobante_tipo: Optional[str] = None
+    metodo_pago: Optional[str] = None
     voucher_referencia: Optional[str] = None
     fecha_pago: Optional[datetime] = None
     fecha_limite_pago: Optional[datetime] = None

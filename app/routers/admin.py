@@ -51,7 +51,11 @@ from app.services.embeddings import (
     generate_product_embedding_text,
     get_embedding,
 )
-from app.services.order_service import transition_order_status
+from app.services.order_service import (
+    transition_order_status,
+    extract_order_payment_method,
+    extract_order_document_info,
+)
 from app.services.cron_service import to_utc
 
 router = APIRouter(prefix="/api/admin", tags=["Admin"])
@@ -218,6 +222,9 @@ def build_order_detail_response(order: Order) -> OrderDetailResponse:
         )
         for ev in (order.events or [])
     ]
+    metodo_clean = extract_order_payment_method(order)
+    comprobante_tipo, doc_num = extract_order_document_info(order)
+
     return OrderDetailResponse(
         id=order.id,
         codigo=order.codigo,
@@ -240,6 +247,9 @@ def build_order_detail_response(order: Order) -> OrderDetailResponse:
         created_at=order.created_at,
         items=items_resp,
         events=events_resp,
+        metodo_pago=metodo_clean,
+        comprobante_tipo=comprobante_tipo,
+        doc_numero=doc_num,
     )
 
 
