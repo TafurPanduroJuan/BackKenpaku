@@ -7,6 +7,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy import String, cast, func, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.services.notification_service import notify_order_status_changed
@@ -540,6 +541,7 @@ def _admin_product_response(db: Session, product: Product) -> AdminProductRespon
         stock_disponible=product.stock_disponible,
         stock_estado=compute_stock_estado(product.stock_disponible),
         imagen_url=product.imagen_url,
+        activo=bool(product.activo),
         sku=product.sku,
         precio_base_usd=product.precio_base_usd,
         margen_pct=product.margen_pct,
@@ -565,7 +567,11 @@ def create_admin_product(
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     db.add(prod)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Ya existe un producto con ese SKU.") from exc
     db.refresh(prod)
 
     return _admin_product_response(db, prod)
@@ -579,6 +585,22 @@ def get_product_field_rules(
         category.value: rules
         for category, rules in PRODUCT_FIELD_RULES.items()
     }
+
+
+@router.get("/products/{product_id}", response_model=AdminProductResponse)
+def get_admin_product_by_id(
+    product_id: UUID,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin_user),
+):
+    """Detalle completo para el formulario de edición (incluye inactivos, SKU, costo USD y margen)."""
+    prod = db.query(Product).filter(Product.id == product_id).first()
+    if not prod:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"detail": "Producto no encontrado.", "code": "NOT_FOUND"},
+        )
+    return _admin_product_response(db, prod)
 
 
 @router.put("/products/{product_id}", response_model=AdminProductResponse)
@@ -620,9 +642,14 @@ def update_admin_product(
     try:
         pricing_service.recalculate_product(db, prod)
     except ValueError as exc:
+        db.rollback()
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Ya existe un producto con ese SKU.") from exc
     db.refresh(prod)
 
     return _admin_product_response(db, prod)
