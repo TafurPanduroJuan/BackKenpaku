@@ -100,6 +100,7 @@ class ProductPaginatedResponse(BaseModel):
 
 
 class AdminProductResponse(ProductResponse):
+    activo: bool = True
     sku: Optional[str] = None
     precio_base_usd: Optional[Decimal] = None
     margen_pct: Optional[Decimal] = None
