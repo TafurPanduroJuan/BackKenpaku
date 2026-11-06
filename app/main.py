@@ -16,6 +16,7 @@ from app.routers import (
     health,
     orders,
     products,
+    quotes,
 )
 
 app = FastAPI(
@@ -101,6 +102,7 @@ async def generic_exception_handler(request: Request, exc: Exception):
 # Registrar routers
 app.include_router(health.router)
 app.include_router(products.router)
+app.include_router(quotes.router)
 app.include_router(categories.router)
 app.include_router(orders.router)
 app.include_router(chat.router)

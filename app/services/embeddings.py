@@ -34,6 +34,19 @@ def generate_product_embedding_text(
     return " | ".join(parts)
 
 
+def generate_product_embedding(product) -> List[float]:
+    """Genera el embedding de un producto usando los mismos campos que el RAG."""
+    text = generate_product_embedding_text(
+        nombre=product.nombre,
+        categoria=product.categoria.value,
+        acabado=product.acabado.value if product.acabado else "",
+        medida=product.medida or "",
+        espesor=product.espesor or "",
+        ficha_tecnica=product.ficha_tecnica or "",
+    )
+    return get_embedding(text)
+
+
 def _normalize(vector: List[float]) -> List[float]:
     """Gemini solo entrega vectores normalizados con 3072 dims; con menos hay que normalizar."""
     norm = math.sqrt(sum(v * v for v in vector))

@@ -27,6 +27,11 @@ class IPRateLimiter:
 chat_rate_limiter = IPRateLimiter(requests_per_minute=20, window_seconds=60)
 login_rate_limiter = IPRateLimiter(requests_per_minute=5, window_seconds=60)
 tracking_rate_limiter = IPRateLimiter(requests_per_minute=25, window_seconds=60)
+quote_code_failure_limiter = IPRateLimiter(requests_per_minute=8, window_seconds=300)
+
+
+def allow_quote_code_attempt(ip: str) -> bool:
+    return quote_code_failure_limiter.is_allowed(ip)
 
 
 def get_real_client_ip(request: Request) -> str:

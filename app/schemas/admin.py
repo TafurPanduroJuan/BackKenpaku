@@ -24,6 +24,7 @@ class ChatLogResponse(BaseModel):
     longitud_mensaje: int
     contiene_palabra_clave_producto: bool
     intencion_etiquetada: Optional[int] = None
+    fuera_de_alcance: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -4,11 +4,14 @@ on:
   schedule:
     # Se ejecuta automáticamente cada hora en punto (00:00, 01:00, etc.) sin costo
     - cron: '0 * * * *'
+    # 08:00 hora de Perú (UTC-5)
+    - cron: '0 13 * * *'
   workflow_dispatch: # Permite disparo manual desde la pestaña Actions de GitHub con un solo clic
 
 jobs:
   run-cron-tasks:
     name: Procesar Recordatorios, Vencimientos y Keep-Alive
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 * * * *'
     runs-on: ubuntu-latest
     steps:
       - name: Invocar Endpoint Protegido de Automatización
@@ -36,3 +39,28 @@ jobs:
             exit 1
           fi
           echo "Tareas programadas procesadas con éxito."
+
+  refresh-daily-pricing:
+    name: Refrescar tipo de cambio y precios cada mañana
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 13 * * *'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Invocar endpoint protegido de precios
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL || 'https://backkenpaku.onrender.com' }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$CRON_SECRET" ]; then
+            echo "Error: falta el secreto CRON_SECRET en GitHub."
+            exit 1
+          fi
+          HTTP_STATUS=$(curl -s -o response.json -w "%{http_code}" \
+            -X POST "$BACKEND_URL/api/cron/refresh-pricing" \
+            -H "X-Cron-Secret: $CRON_SECRET" \
+            --max-time 120)
+          echo "Respuesta HTTP: $HTTP_STATUS"
+          cat response.json
+          if [ "$HTTP_STATUS" -ne 200 ]; then
+            echo "Error: No se pudo refrescar el tipo de cambio y los precios."
+            exit 1
+          fi

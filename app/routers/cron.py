@@ -2,13 +2,13 @@ import logging
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
-from jose import jwt
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.security import decode_access_token
 from app.db.session import get_db
 from app.services.cron_service import process_scheduled_tasks
+from app.services.fx_service import refresh_exchange_rate_and_prices
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +67,22 @@ def run_scheduled_tasks(
         f"[CRON TRIGGER] Ejecutando tareas programadas (autorizado por: {auth['authorized_by']}, simulación: +{simulate_hours}h)"
     )
     result = process_scheduled_tasks(db, simulate_hours=simulate_hours)
+    return result
+
+
+@router.post("/refresh-pricing")
+def run_pricing_refresh(
+    auth: Dict[str, str] = Depends(verify_cron_access),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """Actualiza el tipo de cambio del día y recalcula productos con costo USD."""
+    logger.info(
+        "[CRON PRICING] Actualizando precios (autorizado por: %s)",
+        auth["authorized_by"],
+    )
+    result = refresh_exchange_rate_and_prices(db)
+    if not result["success"]:
+        raise HTTPException(status_code=503, detail=result["detail"])
     return result
 
 

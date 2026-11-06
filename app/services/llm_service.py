@@ -1,10 +1,11 @@
+import json
 import time
 from typing import List, Tuple
 
 import httpx
 
 from app.core.config import settings
-from app.core.prompts import SYSTEM_PROMPT_KENPAKU
+from app.core.prompts import OFFTOPIC_CLASSIFIER_PROMPT, SYSTEM_PROMPT_KENPAKU
 from app.services.embeddings import GEMINI_BASE_URL
 from app.services.whatsapp import build_whatsapp_handoff_url
 
@@ -103,6 +104,53 @@ def _call_with_fallback(contents: List[dict], max_output_tokens: int = 2048) -> 
             f"probando respaldo {fallback}"
         )
         return _call_gemini(fallback, contents, max_output_tokens)
+
+
+def classify_offtopic(message: str) -> bool | None:
+    """Clasifica si un mensaje está fuera del alcance del negocio usando una llamada barata a Gemini.
+
+    Retorna:
+        True  → el mensaje está en alcance (pasa al flujo normal)
+        False → el mensaje está fuera de alcance (debe rechazarse)
+        None  → el clasificador falló (se deja pasar por seguridad)
+    """
+    if not settings.GEMINI_API_KEY:
+        return None  # Sin API key no se puede clasificar; dejar pasar
+
+    try:
+        prompt_text = OFFTOPIC_CLASSIFIER_PROMPT.format(message=message)
+        contents = [{"role": "user", "parts": [{"text": prompt_text}]}]
+
+        # Usar el modelo más barato disponible, con tokens mínimos
+        model_name = settings.GEMINI_FALLBACK_MODEL or settings.GEMINI_MODEL
+        response = httpx.post(
+            f"{GEMINI_BASE_URL}/models/{model_name}:generateContent",
+            headers={"x-goog-api-key": settings.GEMINI_API_KEY},
+            json={
+                "contents": contents,
+                "generationConfig": {
+                    "temperature": 0.0,
+                    "maxOutputTokens": 32,
+                },
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+        data = response.json()
+        parts = data["candidates"][0]["content"]["parts"]
+        raw_text = "".join(p.get("text", "") for p in parts).strip()
+
+        # Limpiar markdown si lo envuelve en bloques de código
+        if raw_text.startswith("```"):
+            raw_text = raw_text.split("\n", 1)[1] if "\n" in raw_text else raw_text
+            raw_text = raw_text.rsplit("```", 1)[0].strip()
+
+        result = json.loads(raw_text)
+        return result.get("en_alcance", None)
+
+    except Exception as e:
+        print(f"⚠️ Error en clasificador off-topic: {e}")
+        return None  # Ante la duda, dejar pasar
 
 
 def generate_llm_reply(
