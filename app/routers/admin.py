@@ -23,6 +23,7 @@ from app.db.models import (
     CategoryMargin,
     Claim,
     ClaimEstadoEnum,
+    MeasurementEquivalence,
     Order,
     OrderEstadoEnum,
     OrderEvent,
@@ -56,8 +57,13 @@ from app.schemas.product import (
     compute_stock_estado,
 )
 from app.schemas.pricing import PricingSettingsResponse, PricingSettingsUpdate
+from app.schemas.measurement import (
+    MeasurementEquivalencesResponse,
+    MeasurementEquivalencesUpdate,
+)
 from app.services import fx_service, pricing_service
 from app.services.embeddings import generate_product_embedding
+from app.services.measurement_matching import get_measurement_equivalences, parse_measurement
 from app.services import product_import_service
 from app.services.storage_service import upload_product_image
 from app.services.order_service import (
@@ -762,6 +768,93 @@ def update_admin_pricing_settings(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     return _pricing_settings_response(db)
+
+
+@router.get(
+    "/measurement-equivalences",
+    response_model=MeasurementEquivalencesResponse,
+)
+def get_admin_measurement_equivalences(
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin_user),
+):
+    rows = get_measurement_equivalences(db)
+    db.commit()
+    return {
+        "items": [
+            {
+                "id": row.id,
+                "tipo_medida": row.tipo_medida,
+                "pulgada": row.pulgada,
+                "mm_minimo": row.mm_minimo,
+                "mm_maximo": row.mm_maximo,
+                "categoria": row.categoria,
+                "tolerancia_mm": row.tolerancia_mm,
+            }
+            for row in rows
+        ]
+    }
+
+
+@router.put(
+    "/measurement-equivalences",
+    response_model=MeasurementEquivalencesResponse,
+)
+def update_admin_measurement_equivalences(
+    settings_in: MeasurementEquivalencesUpdate,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin_user),
+):
+    unique_keys = set()
+    for row in settings_in.items:
+        parsed = parse_measurement(row.pulgada)
+        if not parsed or len(parsed.values) != 1 or parsed.unit != "inch":
+            raise HTTPException(
+                status_code=422,
+                detail=f'La medida en pulgadas "{row.pulgada}" no es válida.',
+            )
+        key = (
+            row.tipo_medida,
+            parsed.values[0],
+            row.categoria.value if row.categoria else None,
+        )
+        if key in unique_keys:
+            raise HTTPException(
+                status_code=422,
+                detail="No repitas la misma medida, tipo y categoría.",
+            )
+        unique_keys.add(key)
+
+    db.query(MeasurementEquivalence).delete(synchronize_session=False)
+    rows = [
+        MeasurementEquivalence(
+            tipo_medida=item.tipo_medida,
+            pulgada=item.pulgada.strip(),
+            mm_minimo=item.mm_minimo,
+            mm_maximo=item.mm_maximo,
+            categoria=item.categoria.value if item.categoria else None,
+            tolerancia_mm=item.tolerancia_mm,
+        )
+        for item in settings_in.items
+    ]
+    db.add_all(rows)
+    db.commit()
+    for row in rows:
+        db.refresh(row)
+    return {
+        "items": [
+            {
+                "id": row.id,
+                "tipo_medida": row.tipo_medida,
+                "pulgada": row.pulgada,
+                "mm_minimo": row.mm_minimo,
+                "mm_maximo": row.mm_maximo,
+                "categoria": row.categoria,
+                "tolerancia_mm": row.tolerancia_mm,
+            }
+            for row in rows
+        ]
+    }
 
 
 # ==================== LOGS DE CHAT Y RECLAMOS (ADMIN) ====================

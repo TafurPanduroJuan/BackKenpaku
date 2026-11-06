@@ -3,6 +3,7 @@ from typing import List
 
 import httpx
 
+from app.core.catalog_vocabulary import normalize_terms
 from app.core.config import settings
 
 EMBEDDING_DIMENSIONS = 1536  
@@ -31,7 +32,7 @@ def generate_product_embedding_text(
     if ficha_tecnica:
         parts.append(f"Ficha técnica: {ficha_tecnica}")
 
-    return " | ".join(parts)
+    return normalize_terms(" | ".join(parts))
 
 
 def generate_product_embedding(product) -> List[float]:

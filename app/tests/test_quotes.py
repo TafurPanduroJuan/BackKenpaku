@@ -6,6 +6,7 @@ import uuid
 import pytest
 
 from app.core.config import settings
+from app.core.catalog_vocabulary import normalize_terms
 from app.db.models import Product, ProductCategoryEnum, ProductAcabadoEnum
 from app.schemas.quote import QuoteLineInput, QuoteRequest
 from app.services import quote_service
@@ -133,6 +134,74 @@ def test_fallback_parser_handles_steel_abbreviations_and_missing_quantity(monkey
     assert parsed[2].cantidad_asumida is True
 
 
+def test_catalog_vocabulary_normalizes_spanish_variants():
+    tube_variants = (
+        "tubos cuadrado",
+        "tubo cuadrados",
+        "TUBO CUADRADA",
+        "Tubos Cuadrados",
+    )
+    assert len({normalize_terms(value) for value in tube_variants}) == 1
+
+    assert normalize_terms("ángulos de 1 1/2") == normalize_terms("angulo 1 1/2")
+    assert normalize_terms("planchas LAC") == normalize_terms("plancha lac")
+    assert len(
+        {
+            normalize_terms(value)
+            for value in ("galv", "galvanizado", "galvanizados")
+        }
+    ) == 1
+    assert normalize_terms('tubo 2"') == normalize_terms("tubo 2 pulgadas")
+    assert normalize_terms('1″') == normalize_terms("1 in")
+    assert normalize_terms("1 pulg") == normalize_terms("1 pulgada")
+    assert normalize_terms("laminada en caliente") == "lac"
+    assert normalize_terms("laminada en frío") == "laf"
+
+
+def test_extract_attributes_normalizes_client_and_model_terms():
+    item = QuoteLineInput(
+        texto_original="TUBOS CUADRADA galv 2x2 de 1.5mm",
+        cantidad=Decimal("1"),
+    )
+
+    attributes = quote_service.extract_attributes(item)
+
+    assert attributes["categoria"] == "tubos"
+    assert attributes["forma"] == "cuadrado"
+    assert attributes["acabado"] == "galvanizado"
+    assert attributes["medida"] == "2 x 2"
+    assert attributes["espesor"] == "1.5 mm"
+
+
+def test_match_item_uses_canonical_product_fields(db_session):
+    clear_quote_tables(db_session)
+    product = seed_quote_product(
+        db_session,
+        nombre="Tubo CUADRADA galvanizados 2x2 de 1.5mm",
+        tipo="galv",
+        forma=None,
+        acabado=ProductAcabadoEnum.galvanizado,
+        medida="2×2",
+        espesor="1,5 MM",
+    )
+
+    result = quote_service.match_item(
+        db_session,
+        QuoteLineInput(
+            texto_original="1 tubo cuadrados galvanizados 2x2 de 1.5mm",
+            cantidad=Decimal("1"),
+        ),
+    )
+
+    assert result["product"].id == product.id
+    assert result["status"] == "con_precio"
+    assert not quote_service._matches_attribute("forma", "cuadrado", Product(
+        nombre="Tubo rectangular",
+        categoria=ProductCategoryEnum.tubos,
+        forma="rectangular",
+    ))
+
+
 def test_gemini_parser_extracts_validated_product_attributes(monkeypatch):
     monkeypatch.setattr(settings, "GEMINI_API_KEY", "test-key")
     response_payload = {
@@ -178,7 +247,8 @@ def test_gemini_parser_extracts_validated_product_attributes(monkeypatch):
 
     assert parsed[0].atributos.categoria == "tubos"
     assert attributes["forma"] == "cuadrado"
-    assert attributes["medida"] == "40x40"
+    assert attributes["medida"] == "40 x 40"
+    assert attributes["espesor"] == "1.5 mm"
     assert attributes["faltantes"] == []
 
 
