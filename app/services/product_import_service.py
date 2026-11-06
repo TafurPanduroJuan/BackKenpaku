@@ -29,7 +29,7 @@ from app.services.pricing_service import (
 logger = logging.getLogger(__name__)
 MAX_IMPORT_BYTES = 5 * 1024 * 1024
 MAX_IMPORT_ROWS = 2000
-IMPORT_FIELDS = ("sku", "nombre", "precio_usd", "categoria", "tipo", "forma", "acabado", "medida", "espesor", "stock")
+IMPORT_FIELDS = ("sku", "nombre", "precio_usd", "categoria", "tipo", "forma", "acabado", "medida", "espesor", "stock", "imagen_url")
 REQUIRED_FIELDS = ("nombre", "precio_usd")
 IMPORT_BATCH_SIZE = 20
 
@@ -107,6 +107,7 @@ def suggest_mapping(headers: Sequence[dict]) -> Dict[str, str]:
         "medida": ("medida", "medidas", "dimension", "dimensiones", "size"),
         "espesor": ("espesor", "grosor", "thickness"),
         "stock": ("stock", "existencia", "inventario", "cantidad", "qty"),
+        "imagen_url": ("url imagen", "imagen url", "imagen", "url foto", "foto", "image", "image url"),
     }
     mapped: Dict[str, str] = {}
     used = set()
@@ -383,6 +384,15 @@ def build_preview(
                 stock = int(stock_value)
         row_values["stock"] = stock
 
+        image_raw = raw.get("imagen_url", "")
+        image_url = None
+        if image_raw:
+            if re.match(r"^https?://\S+$", image_raw, flags=re.IGNORECASE):
+                image_url = image_raw
+            else:
+                errors.append("URL de imagen invalida; debe iniciar con http:// o https://.")
+        row_values["imagen_url"] = image_url
+
         matched = _match_product(row_values, products_by_sku, products_by_description)
         if category is not None and not (matched is not None and update_mode == "precio_stock"):
             try:
@@ -475,6 +485,7 @@ def build_preview(
                 "medida": row_values.get("medida"),
                 "espesor": row_values.get("espesor"),
                 "stock": stock,
+                "imagen_url": row_values.get("imagen_url"),
                 "precio_final_pen": str(calculated_price) if calculated_price is not None else None,
                 "tipo_cambio": str(exchange_rate) if exchange_rate is not None else None,
                 "margen_aplicado_pct": str(effective_margin) if effective_margin is not None else None,
@@ -555,7 +566,7 @@ def commit_import(
                 precio_base_usd=price_usd,
                 margen_pct=None,
                 stock_disponible=row["stock"] if row["stock"] is not None else 0,
-                imagen_url=None,
+                imagen_url=row.get("imagen_url"),
                 activo=new_products_active,
                 embedding=None,
             )
@@ -585,6 +596,8 @@ def commit_import(
                     product.espesor = row["espesor"]
                 if "stock" in fields and row["stock"] is not None:
                     product.stock_disponible = row["stock"]
+                if row.get("imagen_url") and not product.imagen_url:
+                    product.imagen_url = row["imagen_url"]
             elif row["stock"] is not None:
                 product.stock_disponible = row["stock"]
             updated_count += 1
