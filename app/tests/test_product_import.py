@@ -48,7 +48,7 @@ def test_mapping_variants_ignore_unmapped_columns_and_preview_price(db_session):
     seed_pricing(db_session)
     table = (
         "Código proveedor\tDescripción\tPrice USD\tCategoría\tNotas internas\tStock\n"
-        "PR-001\tTubo estructural\t10.00\ttubos\tNO GUARDAR\t8\n"
+        "PR-001\tTubo estructural cuadrado negro 40x40x1.5mm\t10.00\ttubos\tNO GUARDAR\t8\n"
     )
 
     preview = product_import_service.build_preview(
@@ -69,7 +69,7 @@ def test_xlsx_with_supplier_header_variants_parses(db_session):
     workbook = Workbook()
     sheet = workbook.active
     sheet.append(["cod", "description", "USD Price", "category"])
-    sheet.append(["SKU-2", "Plancha LAF", 10, "planchas"])
+    sheet.append(["SKU-2", "Plancha LAF 1.5mm 1.20x2.40m", 10, "planchas"])
     buffer = io.BytesIO()
     workbook.save(buffer)
 
@@ -93,7 +93,7 @@ def test_category_finish_measure_and_thickness_are_inferred(db_session):
     assert row["acabado"] == "negro"
     assert row["medida"] == "40x40"
     assert row["espesor"] == "1.5 mm"
-    assert set(row["inferidos"]) == {"categoria", "acabado", "medida", "espesor"}
+    assert set(row["inferidos"]) == {"categoria", "forma", "acabado", "medida", "espesor"}
 
 
 def test_unrecognized_category_is_error_and_missing_category_can_be_reviewed(db_session):
@@ -115,6 +115,18 @@ def test_unrecognized_category_is_error_and_missing_category_can_be_reviewed(db_
     )
     assert fixed["rows"][0]["status"] == "NUEVO"
     assert fixed["rows"][0]["categoria"] == "accesorios"
+
+
+def test_accessory_import_does_not_require_measure_or_thickness(db_session):
+    seed_pricing(db_session)
+    preview = product_import_service.build_preview(
+        db_session,
+        pasted_text="SKU\tNombre\tPrecio USD\tCategoria\nACC-1\tCareta de soldar\t10\taccesorios\n",
+    )
+    row = preview["rows"][0]
+    assert row["status"] == "NUEVO"
+    assert row["medida"] is None
+    assert row["espesor"] is None
 
 
 def test_invalid_price_and_empty_name_are_row_errors(db_session):
@@ -162,7 +174,7 @@ def test_preview_matches_by_sku_then_name_measure_thickness(db_session):
 
 def test_reimport_updates_same_product_without_duplicate(db_session):
     seed_pricing(db_session)
-    source = "SKU\tNombre\tPrecio USD\tCategoria\tMedida\tEspesor\nREIMPORT-1\tTubo cuadrado\t10\ttubos\t40x40\t1.5 mm\n"
+    source = "SKU\tNombre\tPrecio USD\tCategoria\tMedida\tEspesor\nREIMPORT-1\tTubo cuadrado negro 40x40x1.5mm\t10\ttubos\t40x40\t1.5 mm\n"
 
     first, _ = product_import_service.commit_import(
         db_session, b"", "Tabla pegada", source, None, None, [], "todo", False, "admin@kenpaku.pe"
@@ -283,7 +295,7 @@ def test_preview_commit_history_and_no_image_filter(client, db_session, monkeypa
     from app.routers import admin as admin_router
 
     monkeypatch.setattr(admin_router.product_import_service, "index_import_embeddings", lambda *args: None)
-    source = "SKU\tNombre\tPrecio USD\tCategoria\nROUTE-1\tTubo ruta\t10\ttubos\n"
+    source = "SKU\tNombre\tPrecio USD\tCategoria\nROUTE-1\tTubo ruta cuadrado negro 40x40x1.5mm\t10\ttubos\n"
     preview = client.post(
         "/api/admin/products/import/preview",
         data={"pasted_text": source},

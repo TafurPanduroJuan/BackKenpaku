@@ -166,6 +166,10 @@ def test_admin_product_crud(client, db_session):
     assert resp_patch.status_code == 200
     assert resp_patch.json()["stock_disponible"] == 20
     assert Decimal(str(resp_patch.json()["precio_unitario"])) == Decimal("205.50")
+    public_product = client.get(f"/api/products/{prod_id}")
+    assert public_product.status_code == 200
+    assert public_product.json()["stock_disponible"] == 20
+    assert public_product.headers["cache-control"] == "no-store"
 
     # 3. Baja lógica
     resp_delete = client.delete(
@@ -177,6 +181,46 @@ def test_admin_product_crud(client, db_session):
     # Verificar que el producto está inactivo en BD
     db_prod = db_session.query(Product).filter(Product.id == uuid.UUID(prod_id)).first()
     assert db_prod.activo is False
+
+
+def test_category_rules_allow_accessories_without_thickness_and_reject_incomplete_tubes(client, db_session):
+    _, _, headers = seed_admin_and_product(db_session)
+    accessory = client.post(
+        "/api/admin/products",
+        headers=headers,
+        json={
+            "nombre": "Careta de soldar",
+            "categoria": "accesorios",
+            "precio_unitario": 150,
+            "stock_disponible": 3,
+        },
+    )
+    assert accessory.status_code == 201
+    assert accessory.json()["espesor"] is None
+
+    tube = client.post(
+        "/api/admin/products",
+        headers=headers,
+        json={
+            "nombre": "Tubo cuadrado negro 40x40",
+            "categoria": "tubos",
+            "forma": "cuadrado",
+            "medida": "40x40",
+            "acabado": "negro",
+            "precio_unitario": 100,
+            "stock_disponible": 1,
+        },
+    )
+    assert tube.status_code == 422
+    assert "espesor" in str(tube.json()["detail"]).lower()
+
+
+def test_field_rules_are_exposed_to_admin(client, db_session):
+    _, _, headers = seed_admin_and_product(db_session)
+    response = client.get("/api/admin/products/field-rules", headers=headers)
+    assert response.status_code == 200
+    assert "forma" in response.json()["tubos"]["required"]
+    assert "espesor" in response.json()["fierros"]["hidden_by_default"]
 
 
 def test_chat_logs_paginan_por_conversacion(client, db_session):
