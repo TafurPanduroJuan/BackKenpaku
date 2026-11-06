@@ -14,6 +14,16 @@ services:
         value: "Comercial Kenpaku S.A.C. API"
       - key: DATABASE_URL
         sync: false
+      - key: FX_API_URL
+        sync: false
+      - key: FX_API_KEY
+        sync: false
+      - key: SUPABASE_BUCKET_PRODUCTS
+        value: "products"
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
       - key: GEMINI_API_KEY
         sync: false
       - key: GEMINI_MODEL
@@ -42,3 +52,7 @@ services:
         sync: false
       - key: CRON_SECRET
         sync: false
+      - key: CAJERO_PASSWORD
+        sync: false
+      - key: OFFTOPIC_MIN_DISTANCE
+        value: "0.75"

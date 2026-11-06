@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     GEMINI_FALLBACK_MODEL: str = "gemini-3.1-flash-lite"  # vacío = sin respaldo
     GEMINI_EMBEDDING_MODEL: str = "gemini-embedding-001"
 
+    FX_API_URL: str = ""
+    FX_API_KEY: str = ""
+
     JWT_SECRET: str = ""
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_MINUTES: int = 120
@@ -37,6 +40,7 @@ class Settings(BaseSettings):
     WHATSAPP_NUMBER: str = "51987654321"
     STOCK_LOW_THRESHOLD: int = 10
     RAG_MAX_DISTANCE: float = 0.5
+    OFFTOPIC_MIN_DISTANCE: float = 0.75  # Umbral mínimo de distancia al catálogo para activar clasificador off-topic
 
     # Notificaciones (Fase 3: Brevo, Telegram y Enlaces Públicos)
     BREVO_API_KEY: Union[str, None] = None
@@ -57,6 +61,7 @@ class Settings(BaseSettings):
     SUPABASE_URL: Union[str, None] = None
     SUPABASE_KEY: Union[str, None] = None
     SUPABASE_BUCKET_VOUCHERS: str = "vouchers"
+    SUPABASE_BUCKET_PRODUCTS: str = "products"
     UPLOAD_DIR: str = "uploads/vouchers"
     MAX_UPLOAD_SIZE_BYTES: int = 5 * 1024 * 1024  # 5 MB
 

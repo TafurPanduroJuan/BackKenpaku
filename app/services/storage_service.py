@@ -1,5 +1,4 @@
 import logging
-import os
 import re
 import urllib.request
 import urllib.error
@@ -16,6 +15,11 @@ ALLOWED_MIME_TYPES = {
     "image/png": ".png",
     "image/webp": ".webp",
     "application/pdf": ".pdf",
+}
+PRODUCT_IMAGE_MIME_TYPES = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
 }
 
 
@@ -92,3 +96,39 @@ def upload_voucher_file(file_bytes: bytes, original_filename: str, content_type:
         # En caso extremo de no poder escribir en disco, retornar URL de simulación
         mock_url = f"/api/orders/voucher/mock_{unique_filename}"
         return mock_url, unique_filename
+
+
+def upload_product_image(file_bytes: bytes, content_type: str) -> str:
+    """Sube una imagen al bucket publico de productos usando credenciales del backend."""
+    content_type_clean = (content_type or "").lower().split(";")[0].strip()
+    extension = PRODUCT_IMAGE_MIME_TYPES.get(content_type_clean)
+    if not extension:
+        raise ValueError("Formato de imagen no permitido. Usa JPG, PNG o WEBP.")
+    if not settings.SUPABASE_URL or not settings.SUPABASE_KEY:
+        raise RuntimeError("El almacenamiento de imagenes no esta configurado.")
+
+    filename = f"{uuid.uuid4().hex}{extension}"
+    bucket = settings.SUPABASE_BUCKET_PRODUCTS
+    endpoint = (
+        f"{settings.SUPABASE_URL.rstrip('/')}/storage/v1/object/"
+        f"{bucket}/{filename}"
+    )
+    request = urllib.request.Request(
+        endpoint,
+        data=file_bytes,
+        headers={
+            "Authorization": f"Bearer {settings.SUPABASE_KEY}",
+            "apikey": settings.SUPABASE_KEY,
+            "Content-Type": content_type_clean,
+            "x-upsert": "false",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=20) as response:
+        if response.status not in (200, 201):
+            raise RuntimeError("No se pudo almacenar la imagen del producto.")
+
+    return (
+        f"{settings.SUPABASE_URL.rstrip('/')}/storage/v1/object/public/"
+        f"{bucket}/{filename}"
+    )

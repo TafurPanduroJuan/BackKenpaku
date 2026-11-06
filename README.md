@@ -171,8 +171,22 @@ kenpaku-backend/
 | `CRON_REMINDER_HOURS` / `CRON_EXPIRATION_HOURS` | Horas para recordatorio y vencimiento | `24` / `48` |
 | `ADMIN_EMAIL` | Correo del admin para el seed | `"admin@kenpaku.pe"` |
 | `ADMIN_PASSWORD` | Contraseña del admin para el seed | Definir una propia, no reutilizar |
+| `FX_API_URL` | Endpoint HTTP JSON de la fuente de tipo de cambio USD/PEN | `""` (opcional; usar tasa manual si no se configura) |
+| `FX_API_KEY` | Clave opcional enviada como cabecera `x-api-key` a la fuente FX | `""` |
 
 > Todas las claves van solo en `.env` (local) y en las variables de entorno de Render y Vercel. Nunca en el código.
+
+## Precios desde costo USD
+
+Los productos conservan `precio_unitario` en soles con IGV incluido, usado por catálogo, chat y pedidos. Para productos con `precio_base_usd`, el backend calcula el precio automáticamente con tipo `Decimal`:
+
+`precio_unitario = costo_USD × cambio_USD_PEN × (1 + margen/100)`
+
+Si `costo_incluye_igv` es falso, se multiplica además por `1.18`. El margen se toma en este orden: producto, categoría y global. `redondeo` expresa el incremento en céntimos (por ejemplo, `5` redondea al múltiplo de S/ 0.05 más cercano). Los productos sin costo USD mantienen su precio manual.
+
+Después de desplegar, ejecutar `alembic upgrade head` para aplicar la revisión 005. En el panel admin, abrir **Precios y tipo de cambio** para ajustar márgenes, tratamiento de IGV, redondeo y tasa manual del día. Una tasa manual tiene prioridad sobre la API durante ese día. Si la API falla, el sistema usa el último valor guardado; si todavía no existe ninguno, el cron responde con error y no cambia precios.
+
+Configura `FX_API_URL` en Render para usar una fuente externa. El adaptador espera una respuesta JSON con un valor de venta como `valor_venta`, `venta`, `sell_rate`, `sell`, `exchange_rate` o `rate`; la clave opcional se envía en `x-api-key`. Verifica los términos de uso, límites y disponibilidad de la fuente elegida antes de conectarla. El workflow de GitHub ejecuta `/api/cron/refresh-pricing` cada día a las 08:00 hora de Perú y requiere el secreto existente `CRON_SECRET`.
 
 ---
 

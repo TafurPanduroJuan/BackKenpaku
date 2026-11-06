@@ -1,3 +1,4 @@
+import os
 import sys
 from decimal import Decimal
 from pathlib import Path
@@ -54,26 +55,34 @@ def seed_database():
             existing_admin.activo = True
             print(f"🔄 Administrador {admin_email} sincronizado con ADMIN_PASSWORD.")
 
-        # 1.1 Crear Usuario Cajero si no existe
-        cajero_email = "cajero@kenpaku.pe"
-        cajero_pass = "CajeroKenpaku2026!"
-        existing_cajero = (
-            db.query(User).filter(User.email == cajero_email).first()
-        )
-        if not existing_cajero:
-            cajero_user = User(
-                email=cajero_email,
-                password_hash=get_password_hash(cajero_pass),
-                rol=UserRolEnum.cajero,
-                activo=True,
-            )
-            db.add(cajero_user)
-            print(f"✅ Cajero de tienda creado: {cajero_email}")
+        # 1.1 Usuario Cajero: la contraseña viene SOLO de la variable CAJERO_PASSWORD.
+        # Sin la variable no se crea ni se modifica el cajero (nunca hay clave fija en el código).
+        cajero_email = os.environ.get("CAJERO_EMAIL", "cajero@kenpaku.pe")
+        cajero_pass = os.environ.get("CAJERO_PASSWORD", "")
+        if not cajero_pass:
+            print("ℹ️ CAJERO_PASSWORD no definida: se omite la creación/sincronización del cajero.")
+        elif len(cajero_pass) < 12:
+            print("❌ CAJERO_PASSWORD debe tener al menos 12 caracteres.")
+            sys.exit(1)
         else:
-            existing_cajero.password_hash = get_password_hash(cajero_pass)
-            existing_cajero.rol = UserRolEnum.cajero
-            existing_cajero.activo = True
-            print(f"🔄 Cajero {cajero_email} sincronizado.")
+            existing_cajero = (
+                db.query(User).filter(User.email == cajero_email).first()
+            )
+            if not existing_cajero:
+                db.add(
+                    User(
+                        email=cajero_email,
+                        password_hash=get_password_hash(cajero_pass),
+                        rol=UserRolEnum.cajero,
+                        activo=True,
+                    )
+                )
+                print(f"✅ Cajero de tienda creado: {cajero_email}")
+            else:
+                existing_cajero.password_hash = get_password_hash(cajero_pass)
+                existing_cajero.rol = UserRolEnum.cajero
+                existing_cajero.activo = True
+                print(f"🔄 Cajero {cajero_email} sincronizado.")
         db.commit()
 
         # 2. Productos Iniciales de Acero
@@ -251,11 +260,16 @@ def seed_database():
 
         created_count = 0
         updated_count = 0
+        # Los productos de ejemplo solo se crean en un catálogo vacío; así no reaparecen
+        # si el admin los renombra o elimina después de importar la lista real.
+        catalogo_vacio = db.query(Product).count() == 0
         for pdata in products_data:
             existing_p = (
                 db.query(Product).filter(Product.nombre == pdata["nombre"]).first()
             )
             if not existing_p:
+                if not catalogo_vacio:
+                    continue
                 prod = Product(**pdata)
                 db.add(prod)
                 created_count += 1

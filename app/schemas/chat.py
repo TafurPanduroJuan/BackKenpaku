@@ -4,6 +4,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from app.schemas.product import ProductResponse
+from app.schemas.quote import QuoteSummary
 
 
 class ChatRequest(BaseModel):
@@ -19,3 +20,4 @@ class ChatResponse(BaseModel):
     handoff: bool = False
     whatsapp_url: Optional[str] = None
     generated_by_ai: bool = True
+    quote: Optional[QuoteSummary] = None

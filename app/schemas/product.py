@@ -1,4 +1,5 @@
 from decimal import Decimal
+from datetime import date
 from typing import List, Optional
 from uuid import UUID
 
@@ -26,6 +27,9 @@ class ProductBase(BaseModel):
     descripcion_corta: Optional[str] = None
     ficha_tecnica: Optional[str] = None
     precio_unitario: Decimal = Field(..., ge=0, decimal_places=2)
+    sku: Optional[str] = Field(None, max_length=100)
+    precio_base_usd: Optional[Decimal] = Field(None, ge=0, decimal_places=4)
+    margen_pct: Optional[Decimal] = Field(None, ge=0, decimal_places=3)
     stock_disponible: int = Field(default=0, ge=0)
     imagen_url: Optional[str] = None
     activo: bool = True
@@ -44,6 +48,9 @@ class ProductUpdate(BaseModel):
     descripcion_corta: Optional[str] = None
     ficha_tecnica: Optional[str] = None
     precio_unitario: Optional[Decimal] = Field(None, ge=0, decimal_places=2)
+    sku: Optional[str] = Field(None, max_length=100)
+    precio_base_usd: Optional[Decimal] = Field(None, ge=0, decimal_places=4)
+    margen_pct: Optional[Decimal] = Field(None, ge=0, decimal_places=3)
     stock_disponible: Optional[int] = Field(None, ge=0)
     imagen_url: Optional[str] = None
     activo: Optional[bool] = None
@@ -73,6 +80,23 @@ class ProductResponse(BaseModel):
 
 class ProductPaginatedResponse(BaseModel):
     items: List[ProductResponse]
+    total: int
+    page: int
+    page_size: int
+
+
+class AdminProductResponse(ProductResponse):
+    sku: Optional[str] = None
+    precio_base_usd: Optional[Decimal] = None
+    margen_pct: Optional[Decimal] = None
+    tipo_cambio_usado: Optional[Decimal] = None
+    margen_aplicado_pct: Optional[Decimal] = None
+    fecha_tipo_cambio: Optional[date] = None
+    fuente_tipo_cambio: Optional[str] = None
+
+
+class AdminProductPaginatedResponse(BaseModel):
+    items: List[AdminProductResponse]
     total: int
     page: int
     page_size: int
