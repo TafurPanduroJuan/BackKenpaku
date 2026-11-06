@@ -3,9 +3,10 @@ from datetime import date
 from typing import List, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.core.config import settings
+from app.core.product_rules import infer_product_fields, validate_product_fields
 from app.db.models import ProductAcabadoEnum, ProductCategoryEnum
 
 
@@ -21,6 +22,8 @@ def compute_stock_estado(stock: int) -> str:
 class ProductBase(BaseModel):
     nombre: str = Field(..., max_length=150)
     categoria: ProductCategoryEnum
+    tipo: Optional[str] = Field(None, max_length=100)
+    forma: Optional[str] = Field(None, max_length=50)
     acabado: Optional[ProductAcabadoEnum] = None
     medida: Optional[str] = None
     espesor: Optional[str] = None
@@ -36,12 +39,21 @@ class ProductBase(BaseModel):
 
 
 class ProductCreate(ProductBase):
-    pass
+    @model_validator(mode="after")
+    def validate_category_fields(self):
+        values = infer_product_fields(self.categoria, self.model_dump())
+        self.tipo = values.get("tipo")
+        self.forma = values.get("forma")
+        self.espesor = values.get("espesor")
+        validate_product_fields(self.categoria, values)
+        return self
 
 
 class ProductUpdate(BaseModel):
     nombre: Optional[str] = Field(None, max_length=150)
     categoria: Optional[ProductCategoryEnum] = None
+    tipo: Optional[str] = Field(None, max_length=100)
+    forma: Optional[str] = Field(None, max_length=50)
     acabado: Optional[ProductAcabadoEnum] = None
     medida: Optional[str] = None
     espesor: Optional[str] = None
@@ -65,6 +77,8 @@ class ProductResponse(BaseModel):
     id: UUID
     nombre: str
     categoria: ProductCategoryEnum
+    tipo: Optional[str] = None
+    forma: Optional[str] = None
     acabado: Optional[ProductAcabadoEnum] = None
     medida: Optional[str] = None
     espesor: Optional[str] = None

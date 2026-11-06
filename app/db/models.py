@@ -96,6 +96,8 @@ class Product(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     nombre = Column(String(150), nullable=False)
     categoria = Column(Enum(ProductCategoryEnum), nullable=False, index=True)
+    tipo = Column(String(100), nullable=True)
+    forma = Column(String(50), nullable=True)
     acabado = Column(Enum(ProductAcabadoEnum), nullable=True)
     medida = Column(String(100), nullable=True)
     espesor = Column(String(50), nullable=True)
