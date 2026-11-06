@@ -11,6 +11,11 @@ from sqlalchemy.orm import Session
 
 from app.services.notification_service import notify_order_status_changed
 from app.services.telegram_service import send_telegram_alert
+from app.core.product_rules import (
+    PRODUCT_FIELD_RULES,
+    infer_product_fields,
+    validate_product_fields,
+)
 
 from app.db.models import (
     ChatLog,
@@ -518,6 +523,8 @@ def _admin_product_response(db: Session, product: Product) -> AdminProductRespon
         id=product.id,
         nombre=product.nombre,
         categoria=product.categoria,
+        tipo=product.tipo,
+        forma=product.forma,
         acabado=product.acabado,
         medida=product.medida,
         espesor=product.espesor,
@@ -558,6 +565,16 @@ def create_admin_product(
     return _admin_product_response(db, prod)
 
 
+@router.get("/products/field-rules")
+def get_product_field_rules(
+    admin_user: User = Depends(get_current_admin_user),
+):
+    return {
+        category.value: rules
+        for category, rules in PRODUCT_FIELD_RULES.items()
+    }
+
+
 @router.put("/products/{product_id}", response_model=AdminProductResponse)
 def update_admin_product(
     product_id: UUID,
@@ -576,6 +593,23 @@ def update_admin_product(
     update_data = product_in.model_dump(exclude_unset=True)
     for field, val in update_data.items():
         setattr(prod, field, val)
+
+    try:
+        product_values = infer_product_fields(prod.categoria, {
+            "nombre": prod.nombre,
+            "tipo": prod.tipo,
+            "forma": prod.forma,
+            "acabado": prod.acabado,
+            "medida": prod.medida,
+            "espesor": prod.espesor,
+        })
+        prod.tipo = product_values.get("tipo")
+        prod.forma = product_values.get("forma")
+        prod.espesor = product_values.get("espesor")
+        validate_product_fields(prod.categoria, product_values)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     try:
         pricing_service.recalculate_product(db, prod)

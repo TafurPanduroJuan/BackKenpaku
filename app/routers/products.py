@@ -2,11 +2,12 @@ from decimal import Decimal
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.db.models import Product, ProductAcabadoEnum, ProductCategoryEnum
+from app.core.product_rules import PRODUCT_FIELD_RULES
 from app.db.session import get_db
 from app.schemas.product import (
     ProductPaginatedResponse,
@@ -17,8 +18,17 @@ from app.schemas.product import (
 router = APIRouter(prefix="/api/products", tags=["Products"])
 
 
+@router.get("/field-rules")
+def get_public_product_field_rules():
+    return {
+        category.value: rules
+        for category, rules in PRODUCT_FIELD_RULES.items()
+    }
+
+
 @router.get("", response_model=ProductPaginatedResponse)
 def get_products(
+    response: Response,
     q: Optional[str] = Query(None, description="Término de búsqueda"),
     categoria: Optional[ProductCategoryEnum] = Query(
         None, description="Filtro por categoría"
@@ -45,6 +55,7 @@ def get_products(
     db: Session = Depends(get_db),
 ):
     """Obtiene el catálogo de productos activos filtrado y paginado."""
+    response.headers["Cache-Control"] = "no-store"
     query = db.query(Product).filter(Product.activo == True)
 
     if q:
@@ -71,7 +82,7 @@ def get_products(
         query = query.filter(Product.precio_unitario <= max_precio)
 
     if solo_stock:
-        query = query.filter(Product.stock_disponible > 0)
+        query = query.filter(Product.stock_disponible > Product.stock_reservado)
 
     # Ordenamiento
     if orden == "precio_asc":
@@ -93,14 +104,18 @@ def get_products(
             id=item.id,
             nombre=item.nombre,
             categoria=item.categoria,
+            tipo=item.tipo,
+            forma=item.forma,
             acabado=item.acabado,
             medida=item.medida,
             espesor=item.espesor,
             descripcion_corta=item.descripcion_corta,
             ficha_tecnica=item.ficha_tecnica,
             precio_unitario=item.precio_unitario,
-            stock_disponible=item.stock_disponible,
-            stock_estado=compute_stock_estado(item.stock_disponible),
+            stock_disponible=max(0, item.stock_disponible - (item.stock_reservado or 0)),
+            stock_estado=compute_stock_estado(
+                max(0, item.stock_disponible - (item.stock_reservado or 0))
+            ),
             imagen_url=item.imagen_url,
         )
         items_response.append(resp)
@@ -111,8 +126,13 @@ def get_products(
 
 
 @router.get("/{product_id}", response_model=ProductResponse)
-def get_product_by_id(product_id: UUID, db: Session = Depends(get_db)):
+def get_product_by_id(
+    product_id: UUID,
+    response: Response,
+    db: Session = Depends(get_db),
+):
     """Obtiene el detalle de un producto específico por su UUID."""
+    response.headers["Cache-Control"] = "no-store"
     product = (
         db.query(Product)
         .filter(Product.id == product_id, Product.activo == True)
@@ -128,13 +148,17 @@ def get_product_by_id(product_id: UUID, db: Session = Depends(get_db)):
         id=product.id,
         nombre=product.nombre,
         categoria=product.categoria,
+        tipo=product.tipo,
+        forma=product.forma,
         acabado=product.acabado,
         medida=product.medida,
         espesor=product.espesor,
         descripcion_corta=product.descripcion_corta,
         ficha_tecnica=product.ficha_tecnica,
         precio_unitario=product.precio_unitario,
-        stock_disponible=product.stock_disponible,
-        stock_estado=compute_stock_estado(product.stock_disponible),
+        stock_disponible=max(0, product.stock_disponible - (product.stock_reservado or 0)),
+        stock_estado=compute_stock_estado(
+            max(0, product.stock_disponible - (product.stock_reservado or 0))
+        ),
         imagen_url=product.imagen_url,
     )

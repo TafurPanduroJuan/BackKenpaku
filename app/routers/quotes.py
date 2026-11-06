@@ -1,12 +1,13 @@
 from decimal import Decimal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.orm import Session
 
 from app.core.rate_limit import allow_quote_code_attempt, check_chat_rate_limit, get_real_client_ip
 from app.db.session import get_db
 from app.schemas.quote import (
+    QuoteAnalysisResponse,
     QuoteItemChoice,
     QuoteRecalculateResponse,
     QuoteRequest,
@@ -25,6 +26,21 @@ def _not_found(request: Request):
             detail="No encontré esa proforma.",
         )
     raise HTTPException(status_code=404, detail="No encontré esa proforma.")
+
+
+@router.post(
+    "/analyze",
+    response_model=QuoteAnalysisResponse,
+    dependencies=[Depends(check_chat_rate_limit)],
+)
+def analyze_quote(
+    quote_in: QuoteRequest,
+    db: Session = Depends(get_db),
+):
+    try:
+        return quote_service.analyze_quote(db, quote_in)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post(
@@ -52,8 +68,10 @@ def create_quote(
 def get_quote(
     codigo: str,
     request: Request,
+    response: Response,
     db: Session = Depends(get_db),
 ):
+    response.headers["Cache-Control"] = "no-store"
     quote = quote_service.get_quote_by_code(db, codigo)
     if quote is None:
         _not_found(request)
