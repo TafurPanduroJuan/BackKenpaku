@@ -50,6 +50,7 @@ from app.schemas.order import (
     VoucherValidationRequest,
 )
 from app.schemas.product import (
+    ProductActivoUpdate,
     AdminProductPaginatedResponse,
     AdminProductResponse,
     ProductCreate,
@@ -488,13 +489,18 @@ def update_order_payment_method(
 def get_admin_products(
     q: Optional[str] = Query(None, max_length=100),
     sin_imagen: Optional[bool] = Query(None),
+    estado: str = Query("activos", pattern="^(activos|inactivos|todos)$"),
     page: int = Query(1, ge=1),
     page_size: int = Query(12, ge=1, le=100),
     db: Session = Depends(get_db),
     admin_user: User = Depends(get_current_admin_user),
 ):
-    """Lista todos los productos (activos e inactivos) para la administración."""
+    """Lista productos para la administración (por defecto solo activos)."""
     query = db.query(Product)
+    if estado == "activos":
+        query = query.filter(Product.activo.is_(True))
+    elif estado == "inactivos":
+        query = query.filter(Product.activo.is_(False))
     if q and q.strip():
         term = f"%{q.strip()}%"
         query = query.filter(
@@ -672,6 +678,26 @@ def delete_admin_product(
     prod.activo = False
     db.commit()
     return {"detail": "Producto desactivado correctamente", "code": "SUCCESS"}
+
+@router.patch("/products/{product_id}/activo", response_model=AdminProductResponse)
+def set_admin_product_activo(
+    product_id: UUID,
+    body: ProductActivoUpdate,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin_user),
+):
+    """Reactiva o desactiva un producto sin pasar por la validación del formulario."""
+    prod = db.query(Product).filter(Product.id == product_id).first()
+    if not prod:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"detail": "Producto no encontrado.", "code": "NOT_FOUND"},
+        )
+    prod.activo = body.activo
+    db.commit()
+    db.refresh(prod)
+    return _admin_product_response(db, prod)
+
 
 @router.post("/products/{product_id}/image")
 async def upload_admin_product_image(

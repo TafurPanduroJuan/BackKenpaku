@@ -73,6 +73,10 @@ class ProductStockPriceUpdate(BaseModel):
     precio_unitario: Optional[Decimal] = Field(None, ge=0, decimal_places=2)
 
 
+class ProductActivoUpdate(BaseModel):
+    activo: bool
+
+
 class ProductResponse(BaseModel):
     id: UUID
     nombre: str
