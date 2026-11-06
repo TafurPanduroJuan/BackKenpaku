@@ -156,18 +156,23 @@ def _is_quote_request(text: str) -> bool:
 
 
 def _product_response(product: Product) -> ProductResponse:
+    stock_disponible = max(
+        0, product.stock_disponible - (product.stock_reservado or 0)
+    )
     return ProductResponse(
         id=product.id,
         nombre=product.nombre,
         categoria=product.categoria,
+        tipo=product.tipo,
+        forma=product.forma,
         acabado=product.acabado,
         medida=product.medida,
         espesor=product.espesor,
         descripcion_corta=product.descripcion_corta,
         ficha_tecnica=product.ficha_tecnica,
         precio_unitario=product.precio_unitario,
-        stock_disponible=product.stock_disponible,
-        stock_estado=compute_stock_estado(product.stock_disponible),
+        stock_disponible=stock_disponible,
+        stock_estado=compute_stock_estado(stock_disponible),
         imagen_url=product.imagen_url,
     )
 
@@ -188,7 +193,7 @@ def _product_context(products: List[Product]) -> str:
                     f"Medida: {product.medida}" if product.medida else "",
                     f"Espesor: {product.espesor}" if product.espesor else "",
                     f"Precio: S/ {product.precio_unitario:.2f}",
-                    f"Stock disponible: {product.stock_disponible}",
+                    f"Stock disponible: {max(0, product.stock_disponible - (product.stock_reservado or 0))}",
                     f"Descripción: {product.descripcion_corta}"
                     if product.descripcion_corta
                     else "",
@@ -235,10 +240,107 @@ def _save_chat_logs(
     db.commit()
 
 
+def _quote_followup_question(missing_fields: List[str]) -> str:
+    prompts = {
+        "forma": "la forma (cuadrada, rectangular o redonda)",
+        "tipo": "el tipo (por ejemplo, ángulo, platina, LAC, LAF o corrugado)",
+        "medida": "la medida o diámetro",
+        "espesor": "el espesor en milímetros",
+        "acabado": "el acabado (negro o galvanizado)",
+    }
+    details = [prompts[field] for field in missing_fields if field in prompts]
+    return (
+        "Antes de cotizar, completa tu lista indicando "
+        + ", ".join(details)
+        + ". Puedes responder con esos datos y los aplicaré a las líneas incompletas."
+    )
+
+
+def _handle_quote_items(db, conversation_id, message, items, client_ip=None):
+    analysis = quote_service.analyze_items(db, items)
+    missing_fields = list(dict.fromkeys(
+        field for line in analysis["items"] for field in line["faltantes"]
+    ))
+    if missing_fields:
+        pending_text = "\n".join(item.texto_original for item in items)
+        reply = _quote_followup_question(missing_fields)
+        _save_chat_logs(db, conversation_id, message, reply)
+        return ChatResponse(
+            conversation_id=conversation_id,
+            reply=reply,
+            products=[],
+            handoff=False,
+            generated_by_ai=False,
+            pending_quote_text=pending_text,
+            quote_missing_fields=missing_fields,
+        )
+
+    quote = quote_service.create_quote(
+        db,
+        quote_service.QuoteRequest(items=items, conversation_id=conversation_id),
+    )
+    reply = quote_service.format_chat_summary(quote)
+    _save_chat_logs(db, conversation_id, message, reply)
+    return ChatResponse(
+        conversation_id=conversation_id,
+        reply=reply,
+        products=[],
+        handoff=False,
+        generated_by_ai=False,
+        quote=quote_service.quote_summary(quote),
+    )
+
+
 def process_chat_rag(db: Session, chat_in: ChatRequest, client_ip: Optional[str] = None) -> ChatResponse:
     """Busca productos, aplica el filtro de alcance y genera la respuesta del asesor."""
     conversation_id = chat_in.conversation_id or uuid.uuid4()
     message = chat_in.message.strip()
+
+    if chat_in.pending_quote_text:
+        try:
+            items, analysis = quote_service.complete_pending_items(
+                db, chat_in.pending_quote_text, message
+            )
+        except ValueError as exc:
+            reply = str(exc)
+            _save_chat_logs(db, conversation_id, message, reply)
+            return ChatResponse(
+                conversation_id=conversation_id,
+                reply=reply,
+                products=[],
+                handoff=False,
+                generated_by_ai=False,
+                pending_quote_text=chat_in.pending_quote_text,
+            )
+        missing_fields = list(dict.fromkeys(
+            field for line in analysis["items"] for field in line["faltantes"]
+        ))
+        if missing_fields:
+            pending_text = "\n".join(item.texto_original for item in items)
+            reply = _quote_followup_question(missing_fields)
+            _save_chat_logs(db, conversation_id, message, reply)
+            return ChatResponse(
+                conversation_id=conversation_id,
+                reply=reply,
+                products=[],
+                handoff=False,
+                generated_by_ai=False,
+                pending_quote_text=pending_text,
+                quote_missing_fields=missing_fields,
+            )
+        try:
+            return _handle_quote_items(db, conversation_id, message, items, client_ip)
+        except ValueError as exc:
+            reply = str(exc)
+            _save_chat_logs(db, conversation_id, message, reply)
+            return ChatResponse(
+                conversation_id=conversation_id,
+                reply=reply,
+                products=[],
+                handoff=False,
+                generated_by_ai=False,
+                pending_quote_text=chat_in.pending_quote_text,
+            )
 
     quote_code = _quote_code_from_message(message)
     if quote_code:
@@ -290,10 +392,8 @@ def process_chat_rag(db: Session, chat_in: ChatRequest, client_ip: Optional[str]
 
     if _is_quote_request(message):
         try:
-            quote = quote_service.create_quote(
-                db,
-                quote_service.QuoteRequest(texto=message, conversation_id=conversation_id),
-            )
+            items = quote_service.parse_list(message)
+            return _handle_quote_items(db, conversation_id, message, items, client_ip)
         except ValueError as exc:
             reply = str(exc)
             _save_chat_logs(db, conversation_id, message, reply)
@@ -304,16 +404,6 @@ def process_chat_rag(db: Session, chat_in: ChatRequest, client_ip: Optional[str]
                 handoff=False,
                 generated_by_ai=False,
             )
-        reply = quote_service.format_chat_summary(quote)
-        _save_chat_logs(db, conversation_id, message, reply)
-        return ChatResponse(
-            conversation_id=conversation_id,
-            reply=reply,
-            products=[],
-            handoff=False,
-            generated_by_ai=False,
-            quote=quote_service.quote_summary(quote),
-        )
 
     has_product_keyword = contains_product_keyword(message)
     is_general = is_general_query(message) and not has_product_keyword and not chat_in.product_id
@@ -399,4 +489,3 @@ def process_chat_rag(db: Session, chat_in: ChatRequest, client_ip: Optional[str]
         whatsapp_url=whatsapp_url,
         generated_by_ai=True,
     )
-

@@ -11,6 +11,7 @@ from uuid import UUID
 from openpyxl import load_workbook
 from sqlalchemy.orm import Session
 
+from app.core.product_rules import infer_product_fields, validate_product_fields
 from app.db.models import (
     Product,
     ProductAcabadoEnum,
@@ -28,7 +29,7 @@ from app.services.pricing_service import (
 logger = logging.getLogger(__name__)
 MAX_IMPORT_BYTES = 5 * 1024 * 1024
 MAX_IMPORT_ROWS = 2000
-IMPORT_FIELDS = ("sku", "nombre", "precio_usd", "categoria", "acabado", "medida", "espesor", "stock")
+IMPORT_FIELDS = ("sku", "nombre", "precio_usd", "categoria", "tipo", "forma", "acabado", "medida", "espesor", "stock")
 REQUIRED_FIELDS = ("nombre", "precio_usd")
 IMPORT_BATCH_SIZE = 20
 
@@ -100,6 +101,8 @@ def suggest_mapping(headers: Sequence[dict]) -> Dict[str, str]:
         "nombre": ("nombre", "descripcion", "description", "producto", "articulo", "item descripcion", "product name"),
         "precio_usd": ("precio usd", "price usd", "usd price", "costo usd", "precio", "price", "costo", "valor usd"),
         "categoria": ("categoria", "category", "familia", "linea"),
+        "tipo": ("tipo", "type", "subcategoria", "subcategoria"),
+        "forma": ("forma", "shape", "perfil"),
         "acabado": ("acabado", "finish", "terminacion"),
         "medida": ("medida", "medidas", "dimension", "dimensiones", "size"),
         "espesor": ("espesor", "grosor", "thickness"),
@@ -185,6 +188,16 @@ def _infer_from_name(name: str) -> dict:
             inferred["categoria"] = category
             break
 
+    for shape in ("cuadrado", "rectangular", "redondo"):
+        if re.search(rf"\b{shape}\b", normalized):
+            inferred["forma"] = shape
+            break
+    category = inferred.get("categoria")
+    for product_type in ("corrugado", "liso", "lac", "laf", "galvanizada", "angulo", "platina", "canal"):
+        if re.search(rf"\b{product_type}\b", normalized):
+            inferred["tipo"] = product_type
+            break
+
     if re.search(r"\b(negro|black)\b", normalized):
         inferred["acabado"] = ProductAcabadoEnum.negro
     elif re.search(r"\b(galvanizado|galvanizada|galv)\b", normalized):
@@ -204,7 +217,7 @@ def _infer_from_name(name: str) -> dict:
             inferred["espesor"] = f"{thickness.group(1)} mm"
         else:
             inferred["medida"] = measure
-    elif re.search(r"\d+(?:[.,]\d+)?\s*mm\b", name, flags=re.IGNORECASE):
+    if "espesor" not in inferred and re.search(r"\d+(?:[.,]\d+)?\s*mm\b", name, flags=re.IGNORECASE):
         thickness = re.search(r"\d+(?:[.,]\d+)?\s*mm\b", name, flags=re.IGNORECASE)
         inferred["espesor"] = re.sub(r"\s+", " ", thickness.group())
     return inferred
@@ -317,6 +330,15 @@ def build_preview(
             if category is None:
                 errors.append("Categoria asignada manualmente no valida.")
         row_values["categoria"] = category
+        for field in ("tipo", "forma"):
+            value = _plain_text(raw.get(field, ""), 100 if field == "tipo" else 50)
+            if value:
+                row_values[field] = value
+            else:
+                row_values[field] = inferred.get(field)
+                if row_values[field] is not None:
+                    provided_fields.add(field)
+                    inferred_fields.add(field)
 
         finish_raw = raw.get("acabado", "")
         finish_norm = _normalize(finish_raw)
@@ -362,6 +384,39 @@ def build_preview(
         row_values["stock"] = stock
 
         matched = _match_product(row_values, products_by_sku, products_by_description)
+        if category is not None and not (matched is not None and update_mode == "precio_stock"):
+            try:
+                rule_values = infer_product_fields(category, {
+                    "nombre": name,
+                    "tipo": row_values.get("tipo"),
+                    "forma": row_values.get("forma"),
+                    "medida": row_values.get("medida"),
+                    "espesor": row_values.get("espesor"),
+                    "acabado": finish,
+                })
+                if matched is not None:
+                    old_inferred = infer_product_fields(matched.categoria, {
+                        "nombre": matched.nombre,
+                        "tipo": matched.tipo,
+                        "forma": matched.forma,
+                    })
+                    for field in ("tipo", "forma", "acabado", "medida", "espesor"):
+                        if rule_values.get(field) is None:
+                            rule_values[field] = (
+                                getattr(matched, field, None) or old_inferred.get(field)
+                            )
+                if category == ProductCategoryEnum.fierros:
+                    rule_values["medida"] = rule_values.get("medida") or rule_values.get("espesor")
+                    rule_values["espesor"] = None
+                validate_product_fields(category, rule_values)
+                for field in ("tipo", "forma", "medida", "espesor"):
+                    if row_values.get(field) is None:
+                        row_values[field] = rule_values.get(field)
+                if category == ProductCategoryEnum.fierros:
+                    row_values["medida"] = rule_values.get("medida")
+                    row_values["espesor"] = None
+            except ValueError as exc:
+                errors.append(str(exc))
         duplicate_key = (
             f"sku:{_normalize_match_text(sku).replace(' ', '')}"
             if sku
@@ -414,6 +469,8 @@ def build_preview(
                 "nombre": row_values["nombre"],
                 "precio_usd": str(price_usd) if price_usd is not None else None,
                 "categoria": category.value if category else None,
+                "tipo": row_values.get("tipo"),
+                "forma": row_values.get("forma"),
                 "acabado": finish.value if finish else None,
                 "medida": row_values.get("medida"),
                 "espesor": row_values.get("espesor"),
@@ -488,6 +545,8 @@ def commit_import(
             product = Product(
                 nombre=row["nombre"],
                 categoria=category,
+                tipo=row["tipo"],
+                forma=row["forma"],
                 acabado=ProductAcabadoEnum(row["acabado"]) if row["acabado"] else None,
                 medida=row["medida"],
                 espesor=row["espesor"],
@@ -514,6 +573,10 @@ def commit_import(
                     product.nombre = row["nombre"]
                 if "categoria" in fields:
                     product.categoria = category
+                if "tipo" in fields:
+                    product.tipo = row["tipo"]
+                if "forma" in fields:
+                    product.forma = row["forma"]
                 if "acabado" in fields:
                     product.acabado = ProductAcabadoEnum(row["acabado"]) if row["acabado"] else None
                 if "medida" in fields:
