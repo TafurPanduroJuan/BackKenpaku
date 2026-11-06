@@ -6,6 +6,7 @@ from decimal import Decimal
 from typing import List, Optional
 from uuid import UUID
 from sqlalchemy.orm import Session
+from app.core.catalog_vocabulary import normalize_terms
 from app.core.config import settings
 from app.core.prompts import OFFTOPIC_REJECTION
 from app.db.models import ChatLog, ChatRolEnum, Product
@@ -435,7 +436,9 @@ def process_chat_rag(db: Session, chat_in: ChatRequest, client_ip: Optional[str]
             matched_products = catalog_products[:1]
             nearest_distance = 0.0 if matched_products else 1.0
         else:
-            query_embedding = get_embedding(message, task_type="RETRIEVAL_QUERY")
+            query_embedding = get_embedding(
+                normalize_terms(message), task_type="RETRIEVAL_QUERY"
+            )
             ranked_products = []
             for product in catalog_products:
                 if product.embedding is None:

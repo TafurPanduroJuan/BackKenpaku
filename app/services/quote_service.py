@@ -2,7 +2,6 @@ import json
 import logging
 import re
 import secrets
-import unicodedata
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import List, Optional, Sequence, Tuple
@@ -12,8 +11,9 @@ import httpx
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.config import settings
+from app.core.catalog_vocabulary import normalize_terms
 from app.core.product_rules import PRODUCT_FIELD_RULES
-from app.db.models import Product, Quote, QuoteItem
+from app.db.models import MeasurementEquivalence, Product, Quote, QuoteItem
 from app.schemas.quote import (
     QuoteCandidate,
     QuoteComparisonLine,
@@ -25,6 +25,10 @@ from app.schemas.quote import (
     QuoteSummary,
 )
 from app.services.embeddings import GEMINI_BASE_URL, get_embedding
+from app.services.measurement_matching import (
+    get_measurement_equivalences,
+    measurements_match,
+)
 from app.services.pricing_service import get_latest_exchange_rate
 
 logger = logging.getLogger(__name__)
@@ -52,73 +56,74 @@ CLASSIFIER_PROMPT = (
 )
 
 
-def _normalize(text: str) -> str:
-    value = unicodedata.normalize("NFKD", text.casefold())
-    value = "".join(char for char in value if not unicodedata.combining(char))
-    return re.sub(r"[^a-z0-9./x]+", " ", value).strip()
-
-
 def extract_attributes(item: QuoteLineInput) -> dict:
-    text = f"{item.texto_original} {item.descripcion_normalizada or ''}".casefold()
-    normalized = _normalize(text)
-    category = None
-    category_terms = (
-        ("tubos", r"\btubos?\b"),
-        ("planchas", r"\bplanchas?\b"),
-        ("perfiles", r"\b(?:perfiles?|angulos?|platinas?|canales?)\b"),
-        ("fierros", r"\bfierros?\b"),
-        (
-            "accesorios",
-            r"\b(?:careta|electrodos?|discos?|tornillos?|accesorios?)\b",
-        ),
+    normalized = normalize_terms(
+        f"{item.texto_original} {item.descripcion_normalizada or ''}"
     )
-    for candidate, pattern in category_terms:
-        if re.search(pattern, text):
-            category = candidate
-            break
+    terms = set(normalized.split())
+    category = None
+    if "tubo" in terms:
+        category = "tubos"
+    elif "plancha" in terms:
+        category = "planchas"
+    elif terms.intersection({"perfil", "angulo", "platina", "canal", "viga"}):
+        category = "perfiles"
+    elif "fierro" in terms:
+        category = "fierros"
+    elif terms.intersection({"careta", "electrodo", "disco", "tornillo", "accesorio"}):
+        category = "accesorios"
 
     shape = next(
-        (value for value in ("cuadrado", "rectangular", "redondo") if value in normalized),
+        (value for value in ("cuadrado", "rectangular", "redondo") if value in terms),
         None,
     )
     product_type = None
     for value in (
-        "corrugado", "liso", "lac", "laf", "galvanizada", "angulo", "platina",
+        "corrugado", "liso", "lac", "laf", "galvanizado", "angulo", "platina",
         "canal", "careta", "electrodo", "disco", "tornillo",
     ):
-        if re.search(rf"\b{value}\b", normalized):
+        if value in terms:
             product_type = value
             break
     if category == "perfiles" and product_type is None:
         product_type = next(
-            (value for value in ("angulo", "platina", "canal") if value in normalized),
+            (value for value in ("angulo", "platina", "canal") if value in terms),
             None,
         )
 
     dimension = re.search(
-        r"\b\d+(?:[.,]\d+)?\s*(?:x|×)\s*\d+(?:[.,]\d+)?(?:\s*(?:x|×)\s*\d+(?:[.,]\d+)?)?",
-        text,
+        r"\b\d+(?:[.,]\d+)?\s*(?:x|×)\s*\d+(?:[.,]\d+)?",
+        normalized,
     )
     inch_measure = re.search(
-        r"\b\d+(?:[.,]\d+)?(?:\s+\d+/\d+)?\s*(?:pulgadas?|pulg|[\"″])",
-        text,
+        r"\b\d+(?:[.,]\d+)?(?:\s+\d+/\d+)?\s*pulgada\b",
+        normalized,
     )
-    fraction_measure = re.search(r"\b\d+(?:\s+\d+)?/\d+\b", text)
+    fraction_measure = re.search(r"\b\d+/\d+\b", normalized)
+    mixed_fraction = re.search(r"\b\d+\s+\d+/\d+\b", normalized)
+    if mixed_fraction and not re.search(
+        r"\d\s*x$", normalized[:mixed_fraction.start()].rstrip()
+    ):
+        fraction_measure = mixed_fraction
     measure = (
         dimension.group(0) if dimension else
         inch_measure.group(0) if inch_measure else
         fraction_measure.group(0) if fraction_measure else None
     )
 
-    thickness_match = re.search(r"\b\d+(?:[.,]\d+)?\s*mm\b", text)
-    thickness = thickness_match.group(0).replace(" ", "") if thickness_match else None
+    thickness_match = re.search(r"\b\d+(?:[.,]\d+)?\s*mm\b", normalized)
+    thickness = normalize_terms(thickness_match.group(0)) if thickness_match else None
+    if category == "planchas" and fraction_measure and thickness is None:
+        thickness = fraction_measure.group(0)
+        if not dimension and not inch_measure:
+            measure = None
     if category == "fierros" and thickness and not measure:
         measure = thickness
         thickness = None
     finish = None
-    if re.search(r"\b(?:galv|galvanizad[oa]s?)\b", normalized):
+    if "galvanizado" in terms:
         finish = "galvanizado"
-    elif re.search(r"\bnegro\b", normalized):
+    elif "negro" in terms:
         finish = "negro"
 
     attrs = {
@@ -132,12 +137,23 @@ def extract_attributes(item: QuoteLineInput) -> dict:
     if item.atributos:
         for field, value in item.atributos.model_dump(exclude_none=True).items():
             if value and (field not in attrs or not attrs[field]):
-                attrs[field] = value
-    required = PRODUCT_FIELD_RULES.get(category, {}).get("required", [])
+                attrs[field] = (
+                    normalize_terms(value)
+                    if field != "categoria"
+                    else {
+                        "tubo": "tubos",
+                        "plancha": "planchas",
+                        "perfil": "perfiles",
+                        "fierro": "fierros",
+                        "accesorio": "accesorios",
+                    }.get(normalize_terms(value), normalize_terms(value))
+                )
     if category is None and attrs["categoria"]:
         category = attrs["categoria"]
         attrs["categoria"] = category
-        required = PRODUCT_FIELD_RULES.get(category, {}).get("required", [])
+    required = PRODUCT_FIELD_RULES.get(category, {}).get("required", [])
+    if category == "tubos":
+        required = ["forma", "medida"]
     attrs["faltantes"] = [
         field for field in required if not attrs.get(field)
     ]
@@ -148,38 +164,50 @@ def _attribute_text(product: Product, field: str) -> str:
     value = getattr(product, field, None)
     if field == "acabado":
         value = value.value if value else ""
-    if field == "forma" and not value:
-        name = _normalize(product.nombre)
-        value = next((shape for shape in ("cuadrado", "rectangular", "redondo") if shape in name), "")
-    if field == "tipo" and not value:
-        value = product.nombre
-    if field == "medida" and not value:
-        value = product.nombre
-    if field == "espesor" and not value:
-        value = product.nombre
-    return str(value or "")
+    if value:
+        return str(value) if field in ("medida", "espesor") else normalize_terms(str(value))
+    if field not in ("tipo", "forma", "medida", "espesor", "acabado"):
+        return ""
+    parsed = extract_attributes(
+        QuoteLineInput(texto_original=product.nombre, cantidad=Decimal("1"))
+    )
+    return str(parsed.get(field) or "")
 
 
-def _matches_attribute(field: str, requested: str, product: Product) -> bool:
-    actual = _normalize(_attribute_text(product, field))
-    expected = _normalize(requested)
-    if not expected or not actual:
-        return False
-    expected = expected.replace("pulgadas", "pulg").replace("pulgada", "pulg").replace('"', " pulg")
-    actual = actual.replace("pulgadas", "pulg").replace("pulgada", "pulg").replace('"', " pulg")
-    if field == "medida":
-        compact_expected = re.sub(r"\s+", "", expected.replace("×", "x"))
-        compact_actual = re.sub(r"\s+", "", actual.replace("×", "x"))
-        if compact_expected in compact_actual:
-            return True
-    return expected in actual
+def _matches_attribute(
+    field: str,
+    requested: str,
+    product: Product,
+    db: Optional[Session] = None,
+    equivalences: Optional[Sequence[MeasurementEquivalence]] = None,
+) -> bool:
+    actual = normalize_terms(_attribute_text(product, field))
+    expected = normalize_terms(requested)
+    if field in ("medida", "espesor"):
+        matches, _, _ = measurements_match(
+            db,
+            requested,
+            _attribute_text(product, field),
+            product.categoria,
+            "espesor" if field == "espesor" else "dimension",
+            equivalences,
+        )
+        return matches
+    return bool(expected and actual and expected == actual)
 
 
-def _similarity_score(attrs: dict, product: Product) -> int:
+def _similarity_score(
+    attrs: dict,
+    product: Product,
+    db: Optional[Session] = None,
+    equivalences: Optional[Sequence[MeasurementEquivalence]] = None,
+) -> int:
     return sum(
         1
         for field in ("tipo", "forma", "medida", "espesor", "acabado")
-        if attrs.get(field) and _matches_attribute(field, attrs[field], product)
+        if attrs.get(field) and _matches_attribute(
+            field, attrs[field], product, db, equivalences
+        )
     )
 
 
@@ -189,7 +217,7 @@ def _embedding_distance_map(description: str, products: Sequence[Product]) -> di
         return {}
     from app.services.rag_service import cosine_distance_python
 
-    vector = get_embedding(description, task_type="RETRIEVAL_QUERY")
+    vector = get_embedding(normalize_terms(description), task_type="RETRIEVAL_QUERY")
     return {
         product.id: cosine_distance_python(vector, list(product.embedding))
         for product in embedded_products
@@ -215,7 +243,7 @@ def _fallback_parse_list(text: str) -> List[QuoteLineInput]:
                     texto_original=chunk[:500],
                     cantidad=quantity,
                     cantidad_asumida=assumed,
-                    descripcion_normalizada=description[:300],
+                    descripcion_normalizada=normalize_terms(description)[:300],
                 )
             )
     return parsed
@@ -351,18 +379,27 @@ def parse_list(text: str) -> List[QuoteLineInput]:
         raise ValueError("No se reconocieron materiales en el texto.")
     if len(parsed) > MAX_QUOTE_ITEMS:
         raise ValueError(f"Una proforma admite como máximo {MAX_QUOTE_ITEMS} ítems.")
-    return parsed
+    return [
+        item.model_copy(
+            update={
+                "descripcion_normalizada": normalize_terms(
+                    item.descripcion_normalizada or item.texto_original
+                )[:300]
+            }
+        )
+        for item in parsed
+    ]
 
 
 def _specification_scores(description: str, product: Product) -> Tuple[int, int, int]:
-    query = _normalize(description)
-    product_text = _normalize(" ".join((product.nombre, product.medida or "", product.espesor or "", product.acabado.value if product.acabado else "")))
-    measure_match = int(bool(product.medida and _normalize(product.medida) in query))
-    thickness_match = int(bool(product.espesor and _normalize(product.espesor) in query))
-    finish_match = int(bool(product.acabado and _normalize(product.acabado.value) in query))
-    if product_text and query and query in product_text:
-        measure_match += 1
-    return measure_match, thickness_match, finish_match
+    attrs = extract_attributes(
+        QuoteLineInput(texto_original=description, cantidad=Decimal("1"))
+    )
+    return (
+        int(bool(attrs.get("medida") and _matches_attribute("medida", attrs["medida"], product))),
+        int(bool(attrs.get("espesor") and _matches_attribute("espesor", attrs["espesor"], product))),
+        int(bool(attrs.get("acabado") and _matches_attribute("acabado", attrs["acabado"], product))),
+    )
 
 
 def _candidate(product: Product) -> dict:
@@ -426,10 +463,40 @@ def match_item(db: Session, item: QuoteLineInput) -> dict:
             "options": [],
             "faltantes": [],
         }
-    matches = [
-        product for product in products
-        if all(_matches_attribute(field, attrs[field], product) for field in requested_fields)
-    ]
+    exact_matches = []
+    equivalent_matches = []
+    equivalence_notes = {}
+    equivalences = get_measurement_equivalences(db)
+    for product in products:
+        matched = True
+        used_equivalence = False
+        notes = []
+        for field in requested_fields:
+            if field in ("medida", "espesor"):
+                is_match, note, exact = measurements_match(
+                    db,
+                    attrs[field],
+                    _attribute_text(product, field),
+                    product.categoria,
+                    "espesor" if field == "espesor" else "dimension",
+                    equivalences,
+                )
+                if not is_match:
+                    matched = False
+                    break
+                if note:
+                    notes.append(note)
+                used_equivalence = used_equivalence or not exact
+            elif not _matches_attribute(field, attrs[field], product, db, equivalences):
+                matched = False
+                break
+        if matched:
+            if used_equivalence:
+                equivalent_matches.append(product)
+                equivalence_notes[product.id] = "; ".join(notes)
+            else:
+                exact_matches.append(product)
+    matches = exact_matches or equivalent_matches
     matches.sort(
         key=lambda product: (
             -(product.stock_disponible - (product.stock_reservado or 0) > 0),
@@ -445,6 +512,7 @@ def match_item(db: Session, item: QuoteLineInput) -> dict:
             "status": "con_precio" if available > 0 else "sin_stock",
             "options": [],
             "faltantes": [],
+            "equivalencia_nota": equivalence_notes.get(product.id),
         }
 
     distance_map = _embedding_distance_map(
@@ -453,7 +521,7 @@ def match_item(db: Session, item: QuoteLineInput) -> dict:
     candidates = sorted(
         products,
         key=lambda product: (
-            -_similarity_score(attrs, product),
+            -_similarity_score(attrs, product, db, equivalences),
             distance_map.get(product.id, 1.0),
             product.nombre.casefold(),
         ),
@@ -533,6 +601,7 @@ def _persist_quote(
                 subtotal_linea=line_subtotal,
                 estado_linea=row["status"],
                 opciones_json=row.get("options") or None,
+                equivalencia_nota=row.get("equivalencia_nota"),
                 orden=index,
             )
         )
@@ -666,6 +735,7 @@ def to_quote_response(db: Session, quote: Quote) -> QuoteResponse:
                 precio_unitario_snapshot=item.precio_unitario_snapshot,
                 subtotal_linea=item.subtotal_linea,
                 estado_linea=item.estado_linea,
+                equivalencia_nota=item.equivalencia_nota,
                 opciones=options,
                 faltantes=extract_attributes(
                     QuoteLineInput(
@@ -765,7 +835,13 @@ def recalculate_quote(db: Session, original: Quote) -> Tuple[Quote, Decimal, Lis
             ),
             cantidad_asumida=old_item.cantidad_asumida,
         )
-        prepared.append({"input": new_input, "product": product, "status": status, "options": []})
+        prepared.append({
+            "input": new_input,
+            "product": product,
+            "status": status,
+            "options": [],
+            "equivalencia_nota": old_item.equivalencia_nota,
+        })
 
     new_quote = _persist_quote(db, prepared, original.conversation_id, original.codigo)
     for old_item, new_item in zip(sorted(original.items, key=lambda row: row.orden), sorted(new_quote.items, key=lambda row: row.orden)):
@@ -804,8 +880,14 @@ def format_chat_summary(quote: Quote) -> str:
     priced = sum(1 for item in quote.items if item.estado_linea == "con_precio")
     out_of_stock = sum(1 for item in quote.items if item.estado_linea == "sin_stock")
     unpriced = sum(1 for item in quote.items if item.estado_linea in ("no_se_vende", "ambiguo", "faltan_datos"))
+    equivalence_notes = [
+        item.equivalencia_nota
+        for item in quote.items
+        if item.equivalencia_nota
+    ]
+    note = f" {', '.join(equivalence_notes)}." if equivalence_notes else ""
     return (
         f"Preparé la proforma {quote.codigo}: {priced} ítems cotizados, "
         f"{out_of_stock} sin stock y {unpriced} pendientes de cotizar. "
-        f"Total: S/ {quote.total:.2f}."
+        f"Total: S/ {quote.total:.2f}.{note}"
     )
