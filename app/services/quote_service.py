@@ -113,6 +113,18 @@ def extract_attributes(item: QuoteLineInput) -> dict:
 
     thickness_match = re.search(r"\b\d+(?:[.,]\d+)?\s*mm\b", normalized)
     thickness = normalize_terms(thickness_match.group(0)) if thickness_match else None
+    fraction_source = normalized.replace(dimension.group(0), " ") if dimension else normalized
+    fractions = [
+        match.group(0)
+        for match in re.finditer(r"\b(?:\d+\s+)?\d+/\d+\b", fraction_source)
+    ]
+    if category == "perfiles" and thickness is None:
+        if dimension or inch_measure:
+            extra = [value for value in fractions if value not in (measure or "")]
+            if extra:
+                thickness = extra[-1]
+        elif len(fractions) >= 2:
+            measure, thickness = fractions[0], fractions[1]
     if category == "planchas" and fraction_measure and thickness is None:
         thickness = fraction_measure.group(0)
         if not dimension and not inch_measure:
@@ -158,6 +170,164 @@ def extract_attributes(item: QuoteLineInput) -> dict:
         field for field in required if not attrs.get(field)
     ]
     return attrs
+
+
+_GENERIC_TERMS = frozenset({
+    "negro", "galvanizado", "cuadrado", "rectangular", "redondo", "pulgada",
+    "pulg", "metro", "unidad", "pieza", "para", "metal", "metalico", "metalica",
+    "tipo", "marca", "gris", "estandar", "ninguno",
+})
+
+
+def _term_key(term: str) -> str:
+    """Clave para comparar palabras sin importar singular o plural (guinchas = guincha)."""
+    if term.endswith("s") and len(term) > 4:
+        term = term[:-1]
+    if term.endswith("e") and len(term) > 4:
+        term = term[:-1]
+    return term
+
+
+def _noun_tokens(text: str) -> set:
+    """Palabras que identifican el producto (sin medidas ni atributos genéricos)."""
+    return {
+        _term_key(term)
+        for term in normalize_terms(text).split()
+        if term.isalpha() and len(term) >= 4 and term not in _GENERIC_TERMS
+    }
+
+
+def _attribute_matches(db, attrs, products, requested_fields, equivalences):
+    """Productos que cumplen los atributos pedidos: (exactos, equivalentes, notas)."""
+    exact_matches, equivalent_matches, equivalence_notes = [], [], {}
+    for product in products:
+        matched = True
+        used_equivalence = False
+        notes = []
+        for field in requested_fields:
+            if field in ("medida", "espesor"):
+                is_match, note, exact = measurements_match(
+                    db,
+                    attrs[field],
+                    _attribute_text(product, field),
+                    product.categoria,
+                    "espesor" if field == "espesor" else "dimension",
+                    equivalences,
+                )
+                if not is_match:
+                    matched = False
+                    break
+                if note:
+                    notes.append(note)
+                used_equivalence = used_equivalence or not exact
+            elif not _matches_attribute(field, attrs[field], product, db, equivalences):
+                matched = False
+                break
+        if matched:
+            if used_equivalence:
+                equivalent_matches.append(product)
+                equivalence_notes[product.id] = "; ".join(notes)
+            else:
+                exact_matches.append(product)
+    return exact_matches, equivalent_matches, equivalence_notes
+
+
+def resolve_attributes(db: Session, item: QuoteLineInput) -> dict:
+    """extract_attributes + datos que el catálogo ya define de forma única.
+
+    Si falta un dato pero todos los productos que cumplen lo demás comparten el mismo
+    valor (p. ej. una sola plancha LAC de 1/8), no se le pregunta al cliente.
+    Si no hay ningún producto que cumpla lo pedido, tampoco se pregunta: no existe.
+    """
+    attrs = extract_attributes(item)
+    category = attrs.get("categoria")
+    if not attrs["faltantes"] or not category:
+        return attrs
+    products = [
+        product
+        for product in db.query(Product).filter(Product.activo.is_(True)).all()
+        if product.categoria.value == category
+    ]
+    requested = [
+        field for field in ("tipo", "forma", "medida", "espesor", "acabado")
+        if attrs.get(field)
+    ]
+    exact, equivalent, _ = _attribute_matches(
+        db, attrs, products, requested, get_measurement_equivalences(db)
+    )
+    candidates = exact or equivalent
+    if not candidates:
+        attrs["faltantes"] = []
+        return attrs
+    still_missing = []
+    for field in attrs["faltantes"]:
+        values = {
+            normalize_terms(_attribute_text(product, field))
+            for product in candidates
+            if _attribute_text(product, field)
+        }
+        if len(values) == 1:
+            attrs[field] = _attribute_text(candidates[0], field)
+        else:
+            still_missing.append(field)
+    attrs["faltantes"] = still_missing
+    return attrs
+
+
+def _match_by_catalog_terms(db: Session, item: QuoteLineInput) -> dict:
+    """Productos sin categoría reconocida (guincha, bisagra, alambre...): se buscan
+    por las palabras del catálogo. Si ninguna coincide, el producto no se vende."""
+    text = f"{item.texto_original} {item.descripcion_normalizada or ''}"
+    not_found = {"product": None, "status": "no_se_vende", "options": [], "faltantes": []}
+    line_tokens = _noun_tokens(text)
+    if not line_tokens:
+        return not_found
+    scored = []
+    for product in db.query(Product).filter(Product.activo.is_(True)).all():
+        overlap = len(line_tokens & _noun_tokens(product.nombre))
+        if overlap:
+            scored.append((overlap, product))
+    if not scored:
+        return not_found
+    best = max(overlap for overlap, _ in scored)
+    top = [product for overlap, product in scored if overlap == best]
+    normalized = normalize_terms(text)
+    qualifiers = [
+        re.sub(r"\s+", " ", value)
+        for value in re.findall(
+            r"\b\d+(?:\s+\d+/\d+|[./]\d+)?\s*(?:m|mm|cm|kg|galon|pulgada)\b",
+            normalized,
+        )
+    ]
+    if qualifiers:
+        fitting = [
+            product for product in top
+            if all(
+                qualifier in re.sub(
+                    r"\s+", " ",
+                    normalize_terms(f"{product.nombre} {product.medida or ''} {product.espesor or ''}"),
+                )
+                for qualifier in qualifiers
+            )
+        ]
+        if not fitting:
+            return {**not_found, "options": [_candidate(top[0])]}
+        top = fitting
+    top.sort(
+        key=lambda product: (
+            -(product.stock_disponible - (product.stock_reservado or 0) > 0),
+            Decimal(str(product.precio_unitario)),
+            product.nombre.casefold(),
+        )
+    )
+    product = top[0]
+    available = product.stock_disponible - (product.stock_reservado or 0)
+    return {
+        "product": product,
+        "status": "con_precio" if available > 0 else "sin_stock",
+        "options": [],
+        "faltantes": [],
+    }
 
 
 def _attribute_text(product: Product, field: str) -> str:
@@ -432,14 +602,9 @@ def match_item(db: Session, item: QuoteLineInput) -> dict:
             "faltantes": [],
         }
 
-    attrs = extract_attributes(item)
+    attrs = resolve_attributes(db, item)
     if not attrs["categoria"]:
-        return {
-            "product": None,
-            "status": "no_se_vende",
-            "options": [],
-            "faltantes": [],
-        }
+        return _match_by_catalog_terms(db, item)
     if attrs["faltantes"]:
         return {
             "product": None,
@@ -463,42 +628,15 @@ def match_item(db: Session, item: QuoteLineInput) -> dict:
             "options": [],
             "faltantes": [],
         }
-    exact_matches = []
-    equivalent_matches = []
-    equivalence_notes = {}
     equivalences = get_measurement_equivalences(db)
-    for product in products:
-        matched = True
-        used_equivalence = False
-        notes = []
-        for field in requested_fields:
-            if field in ("medida", "espesor"):
-                is_match, note, exact = measurements_match(
-                    db,
-                    attrs[field],
-                    _attribute_text(product, field),
-                    product.categoria,
-                    "espesor" if field == "espesor" else "dimension",
-                    equivalences,
-                )
-                if not is_match:
-                    matched = False
-                    break
-                if note:
-                    notes.append(note)
-                used_equivalence = used_equivalence or not exact
-            elif not _matches_attribute(field, attrs[field], product, db, equivalences):
-                matched = False
-                break
-        if matched:
-            if used_equivalence:
-                equivalent_matches.append(product)
-                equivalence_notes[product.id] = "; ".join(notes)
-            else:
-                exact_matches.append(product)
+    exact_matches, equivalent_matches, equivalence_notes = _attribute_matches(
+        db, attrs, products, requested_fields, equivalences
+    )
     matches = exact_matches or equivalent_matches
+    line_tokens = _noun_tokens(f"{item.texto_original} {item.descripcion_normalizada or ''}")
     matches.sort(
         key=lambda product: (
+            -len(line_tokens & _noun_tokens(product.nombre)),
             -(product.stock_disponible - (product.stock_reservado or 0) > 0),
             Decimal(str(product.precio_unitario)),
             product.nombre.casefold(),
@@ -644,7 +782,7 @@ def analyze_quote(db: Session, request: QuoteRequest) -> dict:
 def analyze_items(db: Session, items: Sequence[QuoteLineInput]) -> dict:
     analyzed = []
     for item in items:
-        attrs = extract_attributes(item)
+        attrs = resolve_attributes(db, item)
         match = match_item(db, item)
         candidates = match.get("options") or []
         candidate = candidates[0] if candidates else None
@@ -665,11 +803,8 @@ def complete_pending_items(
     answer: str,
 ) -> Tuple[List[QuoteLineInput], dict]:
     items = parse_list(pending_text)
-    incomplete = [
-        (index, extract_attributes(item)["faltantes"])
-        for index, item in enumerate(items)
-        if extract_attributes(item)["faltantes"]
-    ]
+    resolved = [resolve_attributes(db, item)["faltantes"] for item in items]
+    incomplete = [(index, faltantes) for index, faltantes in enumerate(resolved) if faltantes]
     if not incomplete:
         return items, analyze_items(db, items)
     missing_sets = {tuple(fields) for _, fields in incomplete}

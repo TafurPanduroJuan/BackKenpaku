@@ -569,3 +569,136 @@ def test_chat_requests_quote_code_when_user_only_says_recalculate(client, monkey
 
     assert response.status_code == 200
     assert response.json()["reply"] == "Envíame el código KP de la proforma que quieres recalcular."
+
+
+def _only_these_products(db_session):
+    """Aísla el catálogo del test: desactiva lo que hubiera de otros tests."""
+    db_session.query(Product).update({Product.activo: False})
+    db_session.commit()
+
+
+def test_perfil_con_espesor_en_fraccion_no_pide_espesor():
+    attrs = quote_service.extract_attributes(
+        QuoteLineInput(texto_original="3 angulos de 1 1/2 de 3/16", cantidad=Decimal("3"))
+    )
+
+    assert attrs["medida"] == "1 1/2"
+    assert attrs["espesor"] == "3/16"
+    assert attrs["faltantes"] == []
+
+
+def test_perfil_con_dimension_y_espesor_en_fraccion():
+    attrs = quote_service.extract_attributes(
+        QuoteLineInput(texto_original="2 angulos de 40x40 3/16", cantidad=Decimal("2"))
+    )
+
+    assert attrs["espesor"] == "3/16"
+    assert attrs["faltantes"] == []
+
+
+def test_perfil_sin_espesor_sigue_pidiendo_espesor():
+    attrs = quote_service.extract_attributes(
+        QuoteLineInput(texto_original="3 angulos de 1 1/2", cantidad=Decimal("3"))
+    )
+
+    assert attrs["faltantes"] == ["espesor"]
+
+
+def test_plancha_no_pide_medida_si_el_catalogo_tiene_una_sola(db_session):
+    _only_these_products(db_session)
+    seed_quote_product(
+        db_session,
+        nombre="Plancha LAC 1/8 pulgada 1.20 x 2.40 m",
+        categoria=ProductCategoryEnum.planchas,
+        medida="1.20 x 2.40 m",
+        espesor="1/8 pulg",
+    )
+
+    attrs = quote_service.resolve_attributes(
+        db_session,
+        QuoteLineInput(texto_original="2 planchas lac 1/8", cantidad=Decimal("2")),
+    )
+
+    assert attrs["faltantes"] == []
+    assert attrs["medida"] == "1.20 x 2.40 m"
+
+
+def test_plancha_pide_medida_si_el_catalogo_tiene_varias(db_session):
+    _only_these_products(db_session)
+    for medida in ("1.20 x 2.40 m", "1.50 x 3.00 m"):
+        seed_quote_product(
+            db_session,
+            nombre=f"Plancha LAC 1/8 pulgada {medida}",
+            categoria=ProductCategoryEnum.planchas,
+            medida=medida,
+            espesor="1/8 pulg",
+        )
+
+    attrs = quote_service.resolve_attributes(
+        db_session,
+        QuoteLineInput(texto_original="2 planchas lac 1/8", cantidad=Decimal("2")),
+    )
+
+    assert attrs["faltantes"] == ["medida"]
+
+
+def test_producto_inexistente_no_se_marca_como_disponible(db_session):
+    _only_these_products(db_session)
+    seed_quote_product(db_session)
+
+    result = quote_service.match_item(
+        db_session,
+        QuoteLineInput(texto_original="3 helicopteros", cantidad=Decimal("3")),
+    )
+
+    assert result["status"] == "no_se_vende"
+    assert result["product"] is None
+    assert result["options"] == []
+
+
+def test_accesorio_sin_categoria_se_encuentra_por_nombre_y_medida(db_session):
+    _only_these_products(db_session)
+    for metros, precio in ((5, "17.00"), (8, "26.00")):
+        seed_quote_product(
+            db_session,
+            nombre=f"Guincha (wincha) metálica {metros} m",
+            categoria=ProductCategoryEnum.accesorios,
+            acabado=None,
+            medida=f"{metros} m",
+            espesor=None,
+            precio_unitario=Decimal(precio),
+        )
+
+    result = quote_service.match_item(
+        db_session,
+        QuoteLineInput(texto_original="2 guinchas de 8 m", cantidad=Decimal("2")),
+    )
+
+    assert result["status"] == "con_precio"
+    assert result["product"].nombre == "Guincha (wincha) metálica 8 m"
+
+
+def test_accesorio_con_varios_productos_del_mismo_tipo_elige_por_nombre(db_session):
+    _only_these_products(db_session)
+    for nombre, precio in (
+        ("Disco de corte para metal 4 1/2 pulgadas", "4.00"),
+        ("Disco de desbaste para metal 4 1/2 pulgadas", "7.50"),
+    ):
+        seed_quote_product(
+            db_session,
+            nombre=nombre,
+            categoria=ProductCategoryEnum.accesorios,
+            acabado=None,
+            medida=None,
+            espesor=None,
+            precio_unitario=Decimal(precio),
+        )
+
+    result = quote_service.match_item(
+        db_session,
+        QuoteLineInput(texto_original="3 discos de desbaste", cantidad=Decimal("3")),
+    )
+
+    assert result["status"] == "con_precio"
+    assert "desbaste" in result["product"].nombre.casefold()
+
