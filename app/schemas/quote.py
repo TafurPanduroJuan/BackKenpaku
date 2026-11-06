@@ -1,9 +1,20 @@
 from datetime import datetime
 from decimal import Decimal
-from typing import List, Optional
+from typing import List, Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
+
+
+class QuoteItemAttributes(BaseModel):
+    categoria: Optional[
+        Literal["tubos", "planchas", "perfiles", "fierros", "accesorios"]
+    ] = None
+    tipo: Optional[str] = Field(None, max_length=80)
+    forma: Optional[str] = Field(None, max_length=80)
+    medida: Optional[str] = Field(None, max_length=80)
+    espesor: Optional[str] = Field(None, max_length=40)
+    acabado: Optional[str] = Field(None, max_length=40)
 
 
 class QuoteLineInput(BaseModel):
@@ -12,6 +23,8 @@ class QuoteLineInput(BaseModel):
     unidad: Optional[str] = Field(None, max_length=40)
     descripcion_normalizada: Optional[str] = Field(None, max_length=300)
     cantidad_asumida: bool = False
+    atributos: Optional[QuoteItemAttributes] = None
+    product_id: Optional[UUID] = None
 
 
 class QuoteRequest(BaseModel):
@@ -42,6 +55,19 @@ class QuoteCandidate(BaseModel):
     stock_disponible: int
 
 
+class QuoteAnalysisLine(BaseModel):
+    texto_original: str
+    cantidad: Decimal
+    atributos: dict
+    faltantes: List[str] = []
+    estado_linea: str
+    sugerencia: Optional[QuoteCandidate] = None
+
+
+class QuoteAnalysisResponse(BaseModel):
+    items: List[QuoteAnalysisLine]
+
+
 class QuoteItemResponse(BaseModel):
     id: UUID
     texto_original: str
@@ -55,6 +81,7 @@ class QuoteItemResponse(BaseModel):
     subtotal_linea: Optional[Decimal] = None
     estado_linea: str
     opciones: List[QuoteCandidate] = []
+    faltantes: List[str] = []
 
 
 class QuoteResponse(BaseModel):
@@ -81,6 +108,7 @@ class QuoteSummary(BaseModel):
     valida_hasta: datetime
     items_cotizados: int
     items_sin_cotizar: int
+    items_sin_stock: int = 0
 
 
 class QuoteComparisonLine(BaseModel):
