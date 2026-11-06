@@ -210,9 +210,26 @@ class QuoteItem(Base):
     estado_linea = Column(String(20), nullable=False)
     opciones_json = Column(JSON, nullable=True)
     orden = Column(Integer, nullable=False, default=0)
+    equivalencia_nota = Column(String(200), nullable=True)
+    espesor_snapshot = Column(String(50), nullable=True)
+    acabado_snapshot = Column(String(40), nullable=True)
 
     quote = relationship("Quote", back_populates="items")
     product = relationship("Product")
+
+
+class MeasurementEquivalence(Base):
+    """Equivalencias comerciales pulgada <-> milímetros (editables desde el admin)."""
+
+    __tablename__ = "measurement_equivalences"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tipo_medida = Column(String(20), nullable=False)
+    pulgada = Column(String(20), nullable=False)
+    mm_minimo = Column(Numeric(8, 3), nullable=False)
+    mm_maximo = Column(Numeric(8, 3), nullable=False)
+    categoria = Column(String(50), nullable=True)
+    tolerancia_mm = Column(Numeric(5, 2), nullable=False, default=1.5, server_default="1.5")
 
 
 class Order(Base):
