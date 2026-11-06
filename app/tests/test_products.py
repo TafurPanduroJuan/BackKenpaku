@@ -46,6 +46,7 @@ def test_get_products_list_and_pagination(client, db_session):
     assert data["total"] == 2
     assert data["page"] == 1
     assert data["page_size"] == 12
+    assert response.headers["cache-control"] == "no-store"
 
 
 def test_get_products_search_filter(client, db_session):
@@ -84,6 +85,19 @@ def test_get_product_detail_success(client, db_session):
     assert data["id"] == str(p1.id)
     assert data["nombre"] == p1.nombre
     assert data["stock_estado"] == "disponible"
+    assert response.headers["cache-control"] == "no-store"
+
+
+def test_public_stock_is_net_of_reservations(client, db_session):
+    product, _ = seed_test_products(db_session)
+    product.stock_disponible = 10
+    product.stock_reservado = 7
+    db_session.commit()
+
+    response = client.get(f"/api/products/{product.id}")
+
+    assert response.status_code == 200
+    assert response.json()["stock_disponible"] == 3
 
 
 def test_get_product_detail_not_found(client):

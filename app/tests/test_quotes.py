@@ -1,5 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
+import json
 import re
 import uuid
 import pytest
@@ -104,7 +105,7 @@ def test_quote_shows_out_of_stock_price_and_ambiguous_without_price(db_session):
     assert quote.items[0].precio_unitario_snapshot == Decimal("118.00")
     assert quote.items[1].estado_linea == "ambiguo"
     assert quote.items[1].precio_unitario_snapshot is None
-    assert quote.total == Decimal("118.00")
+    assert quote.total == Decimal("0.00")
 
 
 def test_quote_end_of_day_is_1159_pm_lima():
@@ -130,6 +131,93 @@ def test_fallback_parser_handles_steel_abbreviations_and_missing_quantity(monkey
     assert parsed[1].cantidad == Decimal("5")
     assert parsed[2].cantidad == Decimal("1")
     assert parsed[2].cantidad_asumida is True
+
+
+def test_gemini_parser_extracts_validated_product_attributes(monkeypatch):
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", "test-key")
+    response_payload = {
+        "candidates": [{
+            "content": {
+                "parts": [{
+                    "text": json.dumps({
+                        "items": [{
+                            "texto_original": "2 tubos acero",
+                            "cantidad": 2,
+                            "unidad": "unidad",
+                            "descripcion_normalizada": "tubos acero",
+                            "atributos": {
+                                "categoria": "tubos",
+                                "tipo": None,
+                                "forma": "cuadrado",
+                                "medida": "40x40",
+                                "espesor": "1.5mm",
+                                "acabado": "negro",
+                            },
+                        }]
+                    }),
+                }]
+            }
+        }]
+    }
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return response_payload
+
+    monkeypatch.setattr(
+        quote_service.httpx,
+        "post",
+        lambda *args, **kwargs: FakeResponse(),
+    )
+
+    parsed = quote_service.parse_list("2 tubos acero")
+    attributes = quote_service.extract_attributes(parsed[0])
+
+    assert parsed[0].atributos.categoria == "tubos"
+    assert attributes["forma"] == "cuadrado"
+    assert attributes["medida"] == "40x40"
+    assert attributes["faltantes"] == []
+
+
+def test_quote_builder_product_id_matches_selected_active_accessory(db_session):
+    clear_quote_tables(db_session)
+    selected = seed_quote_product(
+        db_session,
+        nombre="Careta de soldar",
+        categoria=ProductCategoryEnum.accesorios,
+    )
+    seed_quote_product(
+        db_session,
+        nombre="Disco de corte",
+        categoria=ProductCategoryEnum.accesorios,
+    )
+    item = QuoteLineInput(
+        texto_original="1 Careta de soldar",
+        cantidad=Decimal("1"),
+        product_id=selected.id,
+    )
+
+    result = quote_service.match_item(db_session, item)
+
+    assert result["product"].id == selected.id
+    assert result["status"] == "con_precio"
+
+
+def test_unclassified_item_does_not_match_an_arbitrary_product(db_session):
+    clear_quote_tables(db_session)
+    seed_quote_product(db_session)
+
+    result = quote_service.match_item(
+        db_session,
+        QuoteLineInput(texto_original="material especial", cantidad=Decimal("1")),
+    )
+
+    assert result["status"] == "no_se_vende"
+    assert result["product"] is None
+    assert result["options"] == []
 
 
 def test_parser_rejects_more_than_fifty_items(monkeypatch):
@@ -230,7 +318,7 @@ def test_quote_http_endpoints_and_generic_missing_code(client, db_session, monke
     monkeypatch.setattr(quote_router, "allow_quote_code_attempt", lambda _ip: True)
     response = client.post(
         "/api/quotes",
-        json={"items": [{"texto_original": "2 tubos cuadrados 2x2 de 1.5mm", "cantidad": 2}]},
+        json={"items": [{"texto_original": "2 tubos cuadrados 2x2 de 1.5mm negro", "cantidad": 2}]},
     )
     assert response.status_code == 200
     data = response.json()
@@ -240,10 +328,43 @@ def test_quote_http_endpoints_and_generic_missing_code(client, db_session, monke
     fetched = client.get(f"/api/quotes/{data['codigo']}")
     assert fetched.status_code == 200
     assert fetched.json()["codigo"] == data["codigo"]
+    assert fetched.headers["cache-control"] == "no-store"
 
     missing = client.get("/api/quotes/not-a-real-code")
     assert missing.status_code == 404
     assert missing.json()["detail"] == "No encontré esa proforma."
+
+
+def test_quote_analyze_reports_missing_fields_without_persisting(client, db_session, monkeypatch):
+    clear_quote_tables(db_session)
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", "")
+
+    response = client.post("/api/quotes/analyze", json={"texto": "5 tubos de 2 pulgadas"})
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["faltantes"] == ["forma", "espesor", "acabado"]
+    from app.db.models import Quote
+    assert db_session.query(Quote).count() == 0
+
+
+def test_chat_asks_for_missing_quote_data_then_creates_quote(client, db_session, monkeypatch):
+    clear_quote_tables(db_session)
+    seed_quote_product(db_session)
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", "")
+
+    first = client.post("/api/chat", json={"message": "cotizame 5 tubos de 2 pulgadas"})
+    assert first.status_code == 200
+    assert first.json()["quote"] is None
+    assert first.json()["pending_quote_text"]
+    assert "forma" in first.json()["reply"].lower()
+
+    second = client.post("/api/chat", json={
+        "message": "cuadrado negro 1.5mm",
+        "pending_quote_text": first.json()["pending_quote_text"],
+    })
+    assert second.status_code == 200
+    assert second.json()["quote"]["codigo"].startswith("KP-")
+    assert second.json()["pending_quote_text"] is None
 
 
 def test_failed_quote_lookups_are_rate_limited_by_ip(client, monkeypatch):
@@ -329,12 +450,12 @@ def test_chat_creates_quote_without_calling_main_llm(client, db_session, monkeyp
 
     response = client.post(
         "/api/chat",
-        json={"message": "10 tubos cuadrados 2x2 de 1.5mm y 5 angulos de 1 1/2"},
+        json={"message": "10 tubos cuadrados 2x2 de 1.5mm negro\n2 tubos cuadrados 2x2 de 1.5mm negro"},
     )
 
     assert response.status_code == 200
     assert response.json()["quote"]["codigo"].startswith("KP-")
-    assert "Total de los productos con precio" in response.json()["reply"]
+    assert "Total:" in response.json()["reply"]
     assert "proforma" in response.json()["reply"].lower()
 
 
