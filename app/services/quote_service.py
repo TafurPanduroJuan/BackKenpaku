@@ -402,7 +402,13 @@ def parse_list(text: str) -> List[QuoteLineInput]:
             )
             parsed = _parse_gemini_json(raw)
         except Exception as exc:
-            logger.warning("Falló el parser Gemini de proformas; se usa parser local: %s", exc)
+            detail = ""
+            if isinstance(exc, httpx.HTTPStatusError):
+                detail = exc.response.text[:800]
+            logger.warning(
+                "Falló el parser Gemini de proformas; se usa parser local: %s | %s",
+                exc, detail,
+            )
             parsed = _fallback_parse_list(text)
 
     parsed = [
