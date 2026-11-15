@@ -68,7 +68,7 @@ def extract_attributes(item: QuoteLineInput) -> dict:
         category = "planchas"
     elif terms.intersection({"perfil", "angulo", "platina", "canal", "viga"}):
         category = "perfiles"
-    elif "fierro" in terms:
+    elif "fierro" in terms or terms.intersection({"corrugado", "liso", "varilla", "barra"}):
         category = "fierros"
     elif terms.intersection({"careta", "electrodo", "disco", "tornillo", "accesorio"}):
         category = "accesorios"
@@ -85,6 +85,8 @@ def extract_attributes(item: QuoteLineInput) -> dict:
         if value in terms:
             product_type = value
             break
+    if category == "tubos":
+        product_type = None
     if category == "perfiles" and product_type is None:
         product_type = next(
             (value for value in ("angulo", "platina", "canal") if value in terms),
@@ -92,11 +94,11 @@ def extract_attributes(item: QuoteLineInput) -> dict:
         )
 
     dimension = re.search(
-        r"\b\d+(?:[.,]\d+)?\s*(?:x|×)\s*\d+(?:[.,]\d+)?",
+        r"(?<![\d/])\b\d+(?:[.,]\d+)?\s*(?:x|×)\s*\d+(?:[.,]\d+)?(?![\d/])",
         normalized,
     )
     inch_measure = re.search(
-        r"\b\d+(?:[.,]\d+)?(?:\s+\d+/\d+)?\s*pulgada\b",
+        r"(?<![\d/.])(?:\d+(?:\s+\d+/\d+)?|\d+/\d+|\d+\.\d+)\s*pulgada\b",
         normalized,
     )
     fraction_measure = re.search(r"\b\d+/\d+\b", normalized)
@@ -120,11 +122,56 @@ def extract_attributes(item: QuoteLineInput) -> dict:
     if category == "fierros" and thickness and not measure:
         measure = thickness
         thickness = None
+    if category in ("perfiles", "planchas") and thickness is None:
+        # Espesor en fracción/decimal: "2 1/2 pulgadas x 1/4", "1 1/2 de 3/16",
+        # "40x40 3/16" o "espesor de 1/4pulgadas".
+        keyword = re.search(
+            r"\bespesor\s*(?:de\s*)?(\d+/\d+|\d+[.,]\d+)\s*(pulgada|mm)?",
+            normalized,
+        )
+        if keyword:
+            thickness = keyword.group(1) + (" mm" if keyword.group(2) == "mm" else "")
+        elif category == "perfiles" and not dimension and re.search(
+            r"(?<![\d/])\d+(?:\s+\d+/\d+)?\s*(?:pulgada)?\s*x\s*\d+/\d+", normalized
+        ):
+            pair = re.search(
+                r"(?<![\d/])(\d+(?:\s+\d+/\d+)?)\s*(?:pulgada)?\s*x\s*(\d+/\d+)\s*(pulgada|mm)?",
+                normalized,
+            )
+            measure = pair.group(1) + " pulgada"
+            thickness = pair.group(2) + (" mm" if pair.group(3) == "mm" else "")
+        elif category == "perfiles" and measure:
+            start = normalized.find(measure)
+            rest = normalized[start + len(measure):] if start >= 0 else normalized
+            tail = re.search(r"(\d+/\d+|\d+[.,]\d+)\s*(pulgada|mm)?", rest)
+            if tail:
+                thickness = tail.group(1) + (" mm" if tail.group(2) == "mm" else "")
+    if category == "tubos" and thickness is None and dimension:
+        # "40 x 40 x 1.8" -> 1.8 es el espesor; "40 x 1.8" -> 40 es la medida y 1.8 el espesor.
+        triple = re.search(
+            r"(?<![\d/.])\d+(?:\.\d+)?\s*x\s*\d+(?:\.\d+)?\s*x\s*(\d+(?:\.\d+)?)"
+            r"(?![\d/.])(?!\s*(?:m\b|mt|metro|cm))",
+            normalized,
+        )
+        sides = re.match(r"(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)$", dimension.group(0))
+        if triple and Decimal(triple.group(1)) <= 5:
+            thickness = triple.group(1) + " mm"
+        elif sides and Decimal(sides.group(2)) < 5 and Decimal(sides.group(1)) >= 10:
+            measure = sides.group(1)
+            thickness = sides.group(2) + " mm"
+
     finish = None
     if "galvanizado" in terms:
         finish = "galvanizado"
-    elif "negro" in terms:
+    elif "laf" in terms:
+        finish = "laf"
+    elif "negro" in terms or "lac" in terms:
         finish = "negro"
+    if category == "tubos" and shape is None and measure:
+        # 40 x 40 -> cuadrado; 40 x 20 -> rectangular (no se pregunta).
+        sides = re.match(r"(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)", measure)
+        if sides:
+            shape = "cuadrado" if Decimal(sides.group(1)) == Decimal(sides.group(2)) else "rectangular"
 
     attrs = {
         "categoria": category,
@@ -152,8 +199,6 @@ def extract_attributes(item: QuoteLineInput) -> dict:
         category = attrs["categoria"]
         attrs["categoria"] = category
     required = PRODUCT_FIELD_RULES.get(category, {}).get("required", [])
-    if category == "tubos":
-        required = ["forma", "medida"]
     attrs["faltantes"] = [
         field for field in required if not attrs.get(field)
     ]
@@ -164,6 +209,8 @@ def _attribute_text(product: Product, field: str) -> str:
     value = getattr(product, field, None)
     if field == "acabado":
         value = value.value if value else ""
+        if value == "ninguno":
+            value = ""
     if value:
         return str(value) if field in ("medida", "espesor") else normalize_terms(str(value))
     if field not in ("tipo", "forma", "medida", "espesor", "acabado"):
@@ -402,13 +449,7 @@ def parse_list(text: str) -> List[QuoteLineInput]:
             )
             parsed = _parse_gemini_json(raw)
         except Exception as exc:
-            detail = ""
-            if isinstance(exc, httpx.HTTPStatusError):
-                detail = exc.response.text[:800]
-            logger.warning(
-                "Falló el parser Gemini de proformas; se usa parser local: %s | %s",
-                exc, detail,
-            )
+            logger.warning("Falló el parser Gemini de proformas; se usa parser local: %s", exc)
             parsed = _fallback_parse_list(text)
 
     parsed = [
@@ -456,6 +497,95 @@ def _candidate(product: Product) -> dict:
     }
 
 
+_NAME_STOPWORDS = frozenset({
+    "de", "del", "para", "un", "una", "el", "la", "los", "las", "con", "y", "en", "por",
+    "x", "m", "mm", "cm", "mt", "mts", "metro", "pulgada", "unidad", "pieza", "kg",
+    "necesito", "quiero", "cotizar", "cotiza", "material",
+})
+
+
+def _stem(token: str) -> str:
+    return token[:-1] if token.endswith("s") and len(token) > 3 else token
+
+
+def _name_tokens(text: str) -> set:
+    """Palabras significativas (sin números, medidas ni conectores) de un texto."""
+    normalized = normalize_terms(text or "")
+    stems = (_stem(token) for token in re.findall(r"[a-z]+", normalized))
+    return {t for t in stems if t not in _NAME_STOPWORDS and len(t) >= 3}
+
+
+def _request_text(item: QuoteLineInput) -> str:
+    text = item.descripcion_normalizada or item.texto_original or ""
+    return re.sub(r"^\s*\d+(?:[.,]\d+)?\s+", "", text, count=1)
+
+
+def _name_coverage(item: QuoteLineInput, product: Product) -> float:
+    """Fracción de las palabras pedidas que aparecen en el nombre del producto."""
+    wanted = _name_tokens(_request_text(item))
+    if not wanted:
+        return 0.0
+    return len(wanted & _name_tokens(product.nombre)) / len(wanted)
+
+
+def _numbers(text: str) -> set:
+    return set(re.findall(r"\d+(?:\.\d+)?(?:/\d+)?", normalize_terms(text or "")))
+
+
+def _match_by_name(db: Session, item: QuoteLineInput) -> Optional[Product]:
+    """Producto sin categoría reconocida (guincha, bisagra...): se busca por nombre y medida."""
+    wanted = _name_tokens(_request_text(item))
+    if not wanted:
+        return None
+    requested_numbers = _numbers(_request_text(item))
+    candidates = []
+    for product in db.query(Product).filter(Product.activo.is_(True)).all():
+        if _name_coverage(item, product) < 1.0:
+            continue
+        product_numbers = _numbers(
+            f"{product.nombre} {product.medida or ''} {product.espesor or ''}"
+        )
+        if requested_numbers and not requested_numbers <= product_numbers:
+            continue
+        candidates.append(product)
+    candidates.sort(
+        key=lambda product: (
+            -(product.stock_disponible - (product.stock_reservado or 0) > 0),
+            Decimal(str(product.precio_unitario)),
+            product.nombre.casefold(),
+        )
+    )
+    return candidates[0] if candidates else None
+
+
+def resolve_attributes(db: Session, item: QuoteLineInput) -> dict:
+    """extract_attributes + datos que el catálogo permite deducir sin preguntar.
+
+    Planchas: si falta la medida pero todos los productos que cumplen lo pedido
+    (tipo/espesor/acabado) tienen la misma, se usa esa en vez de preguntar.
+    """
+    attrs = extract_attributes(item)
+    if attrs["categoria"] == "planchas" and "medida" in attrs["faltantes"]:
+        sizes = set()
+        equivalences = get_measurement_equivalences(db)
+        for product in db.query(Product).filter(Product.activo.is_(True)).all():
+            if product.categoria.value != "planchas":
+                continue
+            if all(
+                _matches_attribute(field, attrs[field], product, db, equivalences)
+                for field in ("tipo", "espesor", "acabado")
+                if attrs.get(field)
+            ):
+                size = _attribute_text(product, "medida")
+                if size:
+                    sizes.add(size)
+        if len(sizes) == 1:
+            attrs["medida"] = sizes.pop()
+            attrs["faltantes"] = [f for f in attrs["faltantes"] if f != "medida"]
+    return attrs
+
+
+
 def match_item(db: Session, item: QuoteLineInput) -> dict:
     """Filtra por atributos expresos y desempata por stock y precio."""
     if item.product_id:
@@ -474,8 +604,17 @@ def match_item(db: Session, item: QuoteLineInput) -> dict:
             "faltantes": [],
         }
 
-    attrs = extract_attributes(item)
+    attrs = resolve_attributes(db, item)
     if not attrs["categoria"]:
+        named = _match_by_name(db, item)
+        if named is not None:
+            available = named.stock_disponible - (named.stock_reservado or 0)
+            return {
+                "product": named,
+                "status": "con_precio" if available > 0 else "sin_stock",
+                "options": [],
+                "faltantes": [],
+            }
         return {
             "product": None,
             "status": "no_se_vende",
@@ -539,9 +678,14 @@ def match_item(db: Session, item: QuoteLineInput) -> dict:
             else:
                 exact_matches.append(product)
     matches = exact_matches or equivalent_matches
+    if attrs["categoria"] == "accesorios" and len(matches) > 1:
+        # Varios accesorios del mismo tipo (discos, electrodos...): decide el nombre pedido.
+        full = [p for p in matches if _name_coverage(item, p) >= 1.0]
+        matches = full
     matches.sort(
         key=lambda product: (
             -(product.stock_disponible - (product.stock_reservado or 0) > 0),
+            -_name_coverage(item, product),
             Decimal(str(product.precio_unitario)),
             product.nombre.casefold(),
         )
@@ -686,7 +830,7 @@ def analyze_quote(db: Session, request: QuoteRequest) -> dict:
 def analyze_items(db: Session, items: Sequence[QuoteLineInput]) -> dict:
     analyzed = []
     for item in items:
-        attrs = extract_attributes(item)
+        attrs = resolve_attributes(db, item)
         match = match_item(db, item)
         candidates = match.get("options") or []
         candidate = candidates[0] if candidates else None
@@ -707,10 +851,9 @@ def complete_pending_items(
     answer: str,
 ) -> Tuple[List[QuoteLineInput], dict]:
     items = parse_list(pending_text)
+    resolved = [resolve_attributes(db, item)["faltantes"] for item in items]
     incomplete = [
-        (index, extract_attributes(item)["faltantes"])
-        for index, item in enumerate(items)
-        if extract_attributes(item)["faltantes"]
+        (index, missing) for index, missing in enumerate(resolved) if missing
     ]
     if not incomplete:
         return items, analyze_items(db, items)
