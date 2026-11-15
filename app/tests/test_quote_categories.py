@@ -118,3 +118,25 @@ def test_tubo_con_espesor_sin_unidad(texto, forma, medida, espesor, faltantes):
 
     assert (attrs["forma"], attrs["medida"], attrs["espesor"]) == (forma, medida, espesor)
     assert attrs["faltantes"] == faltantes
+
+
+@pytest.mark.parametrize(
+    "texto,esperado,cantidad",
+    [
+        ("Necesito cotizar 5 tubos de 2 pulgadas", "5 tubos de 2 pulgadas", 5),
+        ("Hola buenas tardes, quisiera 3 planchas lac 2mm por favor gracias", "3 planchas lac 2mm", 3),
+        ("Hola, me puedes cotizar 10 fierros corrugados de 5/8?", "10 fierros corrugados de 5/8", 10),
+        ("Necesito cotizar el siguiente material: 3 unidades de angulo de 2 x 1/4", "3 unidades de angulo de 2 x 1/4", 3),
+    ],
+)
+def test_saludos_no_quedan_en_la_linea(texto, esperado, cantidad):
+    item = quote_service.parse_list(texto)[0]
+
+    assert item.texto_original == esperado
+    assert item.cantidad == Decimal(cantidad)
+    assert item.cantidad_asumida is False
+
+
+def test_solo_un_saludo_no_genera_lineas():
+    with pytest.raises(ValueError):
+        quote_service.parse_list("hola buenas tardes")

@@ -163,9 +163,9 @@ def extract_attributes(item: QuoteLineInput) -> dict:
     finish = None
     if "galvanizado" in terms:
         finish = "galvanizado"
-    elif "laf" in terms:
+    elif category == "tubos" and "laf" in terms:
         finish = "laf"
-    elif "negro" in terms or "lac" in terms:
+    elif "negro" in terms or (category == "tubos" and "lac" in terms):
         finish = "negro"
     if category == "tubos" and shape is None and measure:
         # 40 x 40 -> cuadrado; 40 x 20 -> rectangular (no se pregunta).
@@ -301,10 +301,52 @@ def _looks_like_material(text: str) -> bool:
     return bool(_MEASURE_PATTERN.search(text or ""))
 
 
+_PREAMBLE_WORDS = frozenset({
+    "hola", "holi", "buenas", "buenos", "buen", "dia", "dias", "tarde", "tardes", "noche", "noches",
+    "por", "favor", "porfa", "porfavor", "quiero", "quisiera", "necesito", "necesitaria", "necesitamos",
+    "requiero", "busco", "buscando", "me", "gustaria", "podria", "podrias", "puedes", "pueden",
+    "ayudas", "ayudar", "ayuda", "cotizar", "cotizame", "cotizarme", "cotiza", "cotices", "cotizen",
+    "cotizacion", "proforma", "presupuesto", "precio", "precios", "de", "del", "el", "la", "los",
+    "las", "siguiente", "siguientes", "material", "materiales", "lista", "que", "para", "mi", "obra",
+    "saber", "cuanto", "cuesta", "cuestan", "sale", "salen", "quiere", "un", "favorcito", "disculpa",
+})
+_CLOSING_WORDS = frozenset({
+    "gracias", "muchas", "saludos", "por", "favor", "porfa", "porfavor", "atento", "atenta", "quedo",
+    "espera", "atentos", "ok", "okey", "cordialmente",
+})
+
+
+def _strip_preamble(text: str) -> str:
+    """Quita saludos/frases de relleno al inicio y al final: 'Necesito cotizar 5 tubos' -> '5 tubos'."""
+    words = text.split()
+    start = 0
+    while start < len(words):
+        token = normalize_terms(words[start]).replace(" ", "")
+        token = re.sub(r"[^a-z]", "", token)
+        # "un/una" solo se quita si no va seguido de un material (evita perder "una plancha").
+        if token in _PREAMBLE_WORDS and not (
+            token == "un" and start + 1 < len(words) and _looks_like_material(words[start + 1])
+        ):
+            start += 1
+        else:
+            break
+    end = len(words)
+    while end > start:
+        token = re.sub(r"[^a-z]", "", normalize_terms(words[end - 1]).replace(" ", ""))
+        if token in _CLOSING_WORDS:
+            end -= 1
+        else:
+            break
+    cleaned = " ".join(words[start:end]).strip(" \t,;.-?!¿¡")
+    return cleaned or text
+
+
+
 def _fallback_parse_list(text: str) -> List[QuoteLineInput]:
     chunks = [chunk.strip(" \t,;.-") for chunk in re.split(r"[\n;:]+|,\s*(?=\d|(?:tubo|plancha|perfil|fierro|angulo))", text) if chunk.strip()]
     parsed: List[QuoteLineInput] = []
     for chunk in chunks:
+        chunk = _strip_preamble(chunk)
         match = re.match(r"^\s*(\d+(?:[.,]\d+)?)\s*(.*)$", chunk)
         if match and match.group(2).strip():
             quantity = Decimal(match.group(1).replace(",", "."))
@@ -340,7 +382,9 @@ def _parse_gemini_json(raw: str) -> List[QuoteLineInput]:
     for row in rows:
         if not isinstance(row, dict):
             continue
-        original = str(row.get("texto_original") or row.get("descripcion_normalizada") or "").strip()
+        original = _strip_preamble(
+            str(row.get("texto_original") or row.get("descripcion_normalizada") or "").strip()
+        )
         description = str(row.get("descripcion_normalizada") or original).strip()
         quantity = row.get("cantidad")
         assumed = quantity is None
