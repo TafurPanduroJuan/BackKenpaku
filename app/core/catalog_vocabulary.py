@@ -3,6 +3,8 @@ import unicodedata
 
 
 SYNONYMS = {
+    "cuadro": "cuadrado",
+    "cuadros": "cuadrado",
     "cuadrada": "cuadrado",
     "cuadradas": "cuadrado",
     "negra": "negro",

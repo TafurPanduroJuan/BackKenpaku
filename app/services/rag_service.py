@@ -243,11 +243,11 @@ def _save_chat_logs(
 
 def _quote_followup_question(missing_fields: List[str]) -> str:
     prompts = {
-        "forma": "la forma (cuadrada, rectangular o redonda)",
+        "forma": "la forma (redondo o cuadrado)",
         "tipo": "el tipo (por ejemplo, ángulo, platina, LAC, LAF o corrugado)",
         "medida": "la medida o diámetro",
         "espesor": "el espesor en milímetros",
-        "acabado": "el acabado (negro o galvanizado)",
+        "acabado": "el acabado (negro LAC, LAF o galvanizado)",
     }
     details = [prompts[field] for field in missing_fields if field in prompts]
     return (
