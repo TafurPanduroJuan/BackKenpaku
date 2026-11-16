@@ -18,3 +18,7 @@ pytest-asyncio>=0.23.0
 ruff>=0.3.0
 email-validator>=2.0.0
 
+# Modelo de intención del chat (APF3): mismas versiones con las que se entrenó el modelo
+pandas==3.0.6
+scikit-learn==1.9.1
+joblib==1.6.0

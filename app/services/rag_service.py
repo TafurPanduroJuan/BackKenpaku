@@ -2,8 +2,9 @@ import math
 import re
 import unicodedata
 import uuid
+from datetime import datetime, timezone
 from decimal import Decimal
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 from sqlalchemy.orm import Session
 from app.core.catalog_vocabulary import normalize_terms
@@ -14,9 +15,11 @@ from app.schemas.chat import ChatRequest, ChatResponse
 from app.schemas.product import ProductResponse, compute_stock_estado
 from app.services.anonymizer import anonymize_text
 from app.services.embeddings import get_embedding
+from app.services.intent_model import predecir_intencion_o_none
 from app.services.llm_service import GENERAL_CONTEXT, NO_MATCH_CONTEXT, classify_offtopic, generate_llm_reply
 from app.core.rate_limit import allow_quote_code_attempt
 from app.services import quote_service
+from app.services.whatsapp import build_whatsapp_handoff_url
 
 
 def cosine_distance_python(v1: List[float], v2: List[float]) -> float:
@@ -92,6 +95,40 @@ def contains_product_keyword(text: str) -> bool:
     lower = text.lower()
 
     return any(k in lower for k in keywords)
+
+
+INTENT_RECLAMO = 2
+INTENT_COMPRA = 3
+
+
+def predict_message_intent(message: str) -> Optional[Dict[str, Any]]:
+    """Predice la intención con el modelo de ML (APF3). None si el modelo está apagado o no disponible.
+
+    Se predice sobre el texto ANONIMIZADO, igual que como se guarda en chat_logs y como se entrenó el modelo
+    (los códigos de proforma KP-… aparecen como [DNI]; el modelo usa esa señal).
+    """
+    safe_message = anonymize_text(message)
+    return predecir_intencion_o_none(
+        {
+            "mensaje_texto": safe_message,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "longitud_mensaje": len(safe_message),
+            "contiene_palabra_clave_producto": contains_product_keyword(message),
+        }
+    )
+
+
+def _intent_is(intent: Optional[Dict[str, Any]], clase: int) -> bool:
+    """True si el modelo predijo `clase` con confianza suficiente (no marcada como baja_confianza)."""
+    return bool(intent) and not intent["baja_confianza"] and intent["intencion_id"] == clase
+
+
+def intent_is_reclamo(intent: Optional[Dict[str, Any]]) -> bool:
+    return _intent_is(intent, INTENT_RECLAMO)
+
+
+def intent_is_compra(intent: Optional[Dict[str, Any]]) -> bool:
+    return _intent_is(intent, INTENT_COMPRA)
 
 
 def is_general_query(text: str) -> bool:
@@ -214,6 +251,7 @@ def _save_chat_logs(
     user_message: str,
     assistant_message: str,
     fuera_de_alcance: bool = False,
+    intent: Optional[Dict[str, Any]] = None,
 ) -> None:
     safe_message = anonymize_text(user_message)
     has_product_keyword = contains_product_keyword(user_message)
@@ -225,7 +263,10 @@ def _save_chat_logs(
                 mensaje_texto=safe_message,
                 longitud_mensaje=len(safe_message),
                 contiene_palabra_clave_producto=has_product_keyword,
+                # Regla de palabras clave (línea base). La predicción del modelo va en columnas aparte.
                 intencion_etiquetada=classify_intention(user_message),
+                intencion_modelo=intent["intencion_id"] if intent else None,
+                probabilidad_modelo=intent["probabilidad"] if intent else None,
                 fuera_de_alcance=fuera_de_alcance,
             ),
             ChatLog(
@@ -257,7 +298,7 @@ def _quote_followup_question(missing_fields: List[str]) -> str:
     )
 
 
-def _handle_quote_items(db, conversation_id, message, items, client_ip=None):
+def _handle_quote_items(db, conversation_id, message, items, client_ip=None, intent=None):
     analysis = quote_service.analyze_items(db, items)
     missing_fields = list(dict.fromkeys(
         field for line in analysis["items"] for field in line["faltantes"]
@@ -265,7 +306,7 @@ def _handle_quote_items(db, conversation_id, message, items, client_ip=None):
     if missing_fields:
         pending_text = "\n".join(item.texto_original for item in items)
         reply = _quote_followup_question(missing_fields)
-        _save_chat_logs(db, conversation_id, message, reply)
+        _save_chat_logs(db, conversation_id, message, reply, intent=intent)
         return ChatResponse(
             conversation_id=conversation_id,
             reply=reply,
@@ -281,7 +322,7 @@ def _handle_quote_items(db, conversation_id, message, items, client_ip=None):
         quote_service.QuoteRequest(items=items, conversation_id=conversation_id),
     )
     reply = quote_service.format_chat_summary(quote)
-    _save_chat_logs(db, conversation_id, message, reply)
+    _save_chat_logs(db, conversation_id, message, reply, intent=intent)
     return ChatResponse(
         conversation_id=conversation_id,
         reply=reply,
@@ -293,7 +334,34 @@ def _handle_quote_items(db, conversation_id, message, items, client_ip=None):
 
 
 def process_chat_rag(db: Session, chat_in: ChatRequest, client_ip: Optional[str] = None) -> ChatResponse:
-    """Busca productos, aplica el filtro de alcance y genera la respuesta del asesor."""
+    """Busca productos, aplica el filtro de alcance y genera la respuesta del asesor.
+
+    Además clasifica la intención del mensaje con el modelo de ML (APF3):
+    * siempre la registra en chat_logs (intencion_modelo / probabilidad_modelo);
+    * si detecta un RECLAMO con confianza suficiente, fuerza la derivación a un asesor humano
+      (handoff = True → el router alerta por Telegram y el chat muestra el botón de WhatsApp);
+    * deja la intención en `response.intent` (campo interno, NO se envía al cliente) para que el router
+      pueda alertar al dueño cuando detecta una COMPRA firme.
+    Si el modelo no está disponible, el flujo es idéntico al anterior (no se rompe nada).
+    """
+    message = chat_in.message.strip()
+    intent = predict_message_intent(message)
+    response = _process_chat_core(db, chat_in, client_ip=client_ip, intent=intent)
+    response.intent = intent
+
+    if intent_is_reclamo(intent) and not response.handoff:
+        response.handoff = True
+        if not response.whatsapp_url:
+            response.whatsapp_url = build_whatsapp_handoff_url(message)
+    return response
+
+
+def _process_chat_core(
+    db: Session,
+    chat_in: ChatRequest,
+    client_ip: Optional[str] = None,
+    intent: Optional[Dict[str, Any]] = None,
+) -> ChatResponse:
     conversation_id = chat_in.conversation_id or uuid.uuid4()
     message = chat_in.message.strip()
 
@@ -304,7 +372,7 @@ def process_chat_rag(db: Session, chat_in: ChatRequest, client_ip: Optional[str]
             )
         except ValueError as exc:
             reply = str(exc)
-            _save_chat_logs(db, conversation_id, message, reply)
+            _save_chat_logs(db, conversation_id, message, reply, intent=intent)
             return ChatResponse(
                 conversation_id=conversation_id,
                 reply=reply,
@@ -319,7 +387,7 @@ def process_chat_rag(db: Session, chat_in: ChatRequest, client_ip: Optional[str]
         if missing_fields:
             pending_text = "\n".join(item.texto_original for item in items)
             reply = _quote_followup_question(missing_fields)
-            _save_chat_logs(db, conversation_id, message, reply)
+            _save_chat_logs(db, conversation_id, message, reply, intent=intent)
             return ChatResponse(
                 conversation_id=conversation_id,
                 reply=reply,
@@ -330,10 +398,10 @@ def process_chat_rag(db: Session, chat_in: ChatRequest, client_ip: Optional[str]
                 quote_missing_fields=missing_fields,
             )
         try:
-            return _handle_quote_items(db, conversation_id, message, items, client_ip)
+            return _handle_quote_items(db, conversation_id, message, items, client_ip, intent)
         except ValueError as exc:
             reply = str(exc)
-            _save_chat_logs(db, conversation_id, message, reply)
+            _save_chat_logs(db, conversation_id, message, reply, intent=intent)
             return ChatResponse(
                 conversation_id=conversation_id,
                 reply=reply,
@@ -351,7 +419,7 @@ def process_chat_rag(db: Session, chat_in: ChatRequest, client_ip: Optional[str]
                 reply = "No encontré esa proforma."
             else:
                 reply = "No encontré esa proforma."
-            _save_chat_logs(db, conversation_id, message, reply)
+            _save_chat_logs(db, conversation_id, message, reply, intent=intent)
             return ChatResponse(
                 conversation_id=conversation_id,
                 reply=reply,
@@ -366,7 +434,7 @@ def process_chat_rag(db: Session, chat_in: ChatRequest, client_ip: Optional[str]
             f"Recalculé la proforma {new_quote.codigo}. El total anterior era S/ {old_total:.2f} "
             f"y el nuevo es S/ {new_quote.total:.2f} (diferencia S/ {difference:.2f})."
         )
-        _save_chat_logs(db, conversation_id, message, reply)
+        _save_chat_logs(db, conversation_id, message, reply, intent=intent)
         return ChatResponse(
             conversation_id=conversation_id,
             reply=reply,
@@ -382,7 +450,7 @@ def process_chat_rag(db: Session, chat_in: ChatRequest, client_ip: Optional[str]
     )
     if re.search(r"\b(recalcular|recalcula|actualizar mi proforma)\b", normalized_quote_message):
         reply = "Envíame el código KP de la proforma que quieres recalcular."
-        _save_chat_logs(db, conversation_id, message, reply)
+        _save_chat_logs(db, conversation_id, message, reply, intent=intent)
         return ChatResponse(
             conversation_id=conversation_id,
             reply=reply,
@@ -394,10 +462,10 @@ def process_chat_rag(db: Session, chat_in: ChatRequest, client_ip: Optional[str]
     if _is_quote_request(message):
         try:
             items = quote_service.parse_list(message)
-            return _handle_quote_items(db, conversation_id, message, items, client_ip)
+            return _handle_quote_items(db, conversation_id, message, items, client_ip, intent)
         except ValueError as exc:
             reply = str(exc)
-            _save_chat_logs(db, conversation_id, message, reply)
+            _save_chat_logs(db, conversation_id, message, reply, intent=intent)
             return ChatResponse(
                 conversation_id=conversation_id,
                 reply=reply,
@@ -463,6 +531,7 @@ def process_chat_rag(db: Session, chat_in: ChatRequest, client_ip: Optional[str]
                 message,
                 OFFTOPIC_REJECTION,
                 fuera_de_alcance=True,
+                intent=intent,
             )
             return ChatResponse(
                 conversation_id=conversation_id,
@@ -482,7 +551,7 @@ def process_chat_rag(db: Session, chat_in: ChatRequest, client_ip: Optional[str]
         context_text,
         chat_history,
     )
-    _save_chat_logs(db, conversation_id, message, reply)
+    _save_chat_logs(db, conversation_id, message, reply, intent=intent)
 
     return ChatResponse(
         conversation_id=conversation_id,

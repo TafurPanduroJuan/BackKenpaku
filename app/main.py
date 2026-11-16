@@ -1,4 +1,6 @@
 # Comercial Kenpaku S.A.C. API - Notificaciones Brevo y Telegram Activas
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,12 +16,23 @@ from app.routers import (
     claims,
     cron,
     health,
+    ml,
     orders,
     products,
     quotes,
 )
+from app.services.intent_model import precargar_modelo
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    # Carga el modelo de intención (APF3) al iniciar: el primer chat no paga el import de sklearn.
+    # precargar_modelo() nunca lanza excepción: si falla, el chat usa la regla de palabras clave.
+    precargar_modelo()
+    yield
+
 
 app = FastAPI(
+    lifespan=lifespan,
     title=settings.PROJECT_NAME,
     openapi_url="/api/openapi.json",
     docs_url="/docs",
@@ -110,6 +123,7 @@ app.include_router(claims.router)
 app.include_router(auth.router)
 app.include_router(admin.router)
 app.include_router(cron.router)
+app.include_router(ml.router)
 
 @app.get("/", include_in_schema=False)
 def root():

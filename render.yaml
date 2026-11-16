@@ -56,3 +56,5 @@ services:
         sync: false
       - key: OFFTOPIC_MIN_DISTANCE
         value: "0.75"
+      - key: ML_INTENT_ENABLED
+        value: "true"

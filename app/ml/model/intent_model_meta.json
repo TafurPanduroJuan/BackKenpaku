@@ -1,0 +1,28 @@
+{
+  "modelo": "Regresión logística",
+  "parametros": {
+    "clf__C": "100"
+  },
+  "clases": {
+    "0": "Consulta general",
+    "1": "Cotización/Precio",
+    "2": "Reclamo/Soporte",
+    "3": "Compra firme"
+  },
+  "umbral_confianza": 0.5,
+  "acciones": {
+    "0": "responder_con_asesor_ia",
+    "1": "ofrecer_proforma_y_registrar_cotizacion",
+    "2": "derivar_a_humano_por_whatsapp_y_alertar_telegram",
+    "3": "alerta_prioritaria_al_administrador"
+  },
+  "semilla": 42,
+  "sklearn": "1.9.1",
+  "pandas": "3.0.6",
+  "numpy": "2.5.4",
+  "filas_entrenamiento": 316,
+  "filas_prueba": 80,
+  "F1_macro_prueba": 0.9353,
+  "accuracy_prueba": 0.95,
+  "advertencia": "Entrenado con 60 mensajes reales + simulados; resultados indicativos hasta validar con más chats reales."
+}

@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     RAG_MAX_DISTANCE: float = 0.5
     OFFTOPIC_MIN_DISTANCE: float = 0.75  # Umbral mínimo de distancia al catálogo para activar clasificador off-topic
 
+    # Modelo de intención del chat (APF3). False = vuelve a la regla de palabras clave sin tocar código.
+    ML_INTENT_ENABLED: bool = True
+
     # Notificaciones (Fase 3: Brevo, Telegram y Enlaces Públicos)
     BREVO_API_KEY: Union[str, None] = None
     SENDER_EMAIL: str = "ventas@kenpaku.pe"

@@ -10,6 +10,7 @@ from app.services.email_service import (
 )
 from app.services.telegram_service import (
     format_chat_handoff_telegram,
+    format_chat_purchase_intent_telegram,
     format_new_claim_telegram,
     format_new_order_telegram,
     format_order_status_telegram,
@@ -116,17 +117,36 @@ def notify_claim_created(claim: Claim) -> dict:
     return results
 
 
-def notify_chat_handoff(query: str, cliente_info: str = "Cliente web") -> dict:
+def notify_chat_handoff(
+    query: str, cliente_info: str = "Cliente web", motivo: Optional[str] = None
+) -> dict:
     """
     Notifica cuando un usuario en el chat de IA solicita atención humana:
     Envía alerta instantánea con la consulta al dueño por Telegram.
     """
     results = {}
     try:
-        msg = format_chat_handoff_telegram(query, cliente_info=cliente_info)
+        msg = format_chat_handoff_telegram(query, cliente_info=cliente_info, motivo=motivo)
         results["telegram"] = send_telegram_alert(msg)
     except Exception as e:
         logger.error(f"[NOTIFICATION ERROR] Error al notificar derivación de chat: {e}")
+        results["error"] = str(e)
+
+    return results
+
+
+def notify_chat_purchase_intent(
+    query: str, cliente_info: str = "Cliente web", probabilidad: Optional[float] = None
+) -> dict:
+    """Alerta prioritaria al dueño por Telegram cuando el modelo detecta intención firme de compra."""
+    results = {}
+    try:
+        msg = format_chat_purchase_intent_telegram(
+            query, cliente_info=cliente_info, probabilidad=probabilidad
+        )
+        results["telegram"] = send_telegram_alert(msg)
+    except Exception as e:
+        logger.error(f"[NOTIFICATION ERROR] Error al notificar intención de compra: {e}")
         results["error"] = str(e)
 
     return results
