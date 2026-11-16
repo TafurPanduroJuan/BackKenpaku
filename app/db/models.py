@@ -7,6 +7,7 @@ from sqlalchemy import (
     Column,
     DateTime,
     Enum,
+    Float,
     ForeignKey,
     Integer,
     Numeric,
@@ -328,8 +329,12 @@ class ChatLog(Base):
     contiene_palabra_clave_producto = Column(
         Boolean, default=False, nullable=False
     )
+    # Regla de palabras clave del MVP (línea base). NO es etiqueta de referencia para entrenar.
     intencion_etiquetada = Column(Integer, nullable=True)
     fuera_de_alcance = Column(Boolean, default=False, nullable=False)
+    # Predicción del modelo de ML (APF3). NULL = mensaje del asistente o modelo no disponible.
+    intencion_modelo = Column(Integer, nullable=True)
+    probabilidad_modelo = Column(Float, nullable=True)
 
 
 class Claim(Base):

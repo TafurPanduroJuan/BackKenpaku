@@ -1,3 +1,4 @@
+import html
 import logging
 from typing import Optional
 import httpx
@@ -152,13 +153,32 @@ def format_new_claim_telegram(claim: Claim) -> str:
 
 
 def format_chat_handoff_telegram(
-    query: str, cliente_info: str = "Cliente web"
+    query: str, cliente_info: str = "Cliente web", motivo: Optional[str] = None
 ) -> str:
-    """Formatea la alerta cuando un cliente solicita un asesor humano en el Chat IA."""
+    """Formatea la alerta cuando un cliente solicita un asesor humano en el Chat IA.
+
+    `motivo` (opcional) indica por qué se derivó, p. ej. un reclamo detectado por el modelo de ML.
+    """
+    motivo_linea = f"<b>Motivo:</b> {motivo}\n" if motivo else ""
     return (
         f"💬 <b>CLIENTE SOLICITA ASESOR HUMANO (CHAT IA)</b>\n\n"
         f"<b>Consulta del cliente:</b>\n<i>\"{query}\"</i>\n\n"
+        f"{motivo_linea}"
         f"<b>Origen:</b> {cliente_info}\n"
+        f"<b>WhatsApp de atención:</b> +{settings.WHATSAPP_NUMBER}"
+    )
+
+
+def format_chat_purchase_intent_telegram(
+    query: str, cliente_info: str = "Cliente web", probabilidad: Optional[float] = None
+) -> str:
+    """Alerta prioritaria: el modelo de ML detectó intención firme de compra en el Chat IA."""
+    prob = f" ({probabilidad:.0%} de confianza)" if probabilidad is not None else ""
+    return (
+        f"🛒 <b>INTENCIÓN DE COMPRA DETECTADA (CHAT IA)</b>{prob}\n\n"
+        f"<b>Mensaje del cliente:</b>\n<i>\"{html.escape(query)}\"</i>\n\n"
+        f"<b>Origen:</b> {cliente_info}\n"
+        f"<b>Acción sugerida:</b> contactar al cliente cuanto antes para cerrar la venta.\n"
         f"<b>WhatsApp de atención:</b> +{settings.WHATSAPP_NUMBER}"
     )
 

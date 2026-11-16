@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -24,3 +24,5 @@ class ChatResponse(BaseModel):
     quote: Optional[QuoteSummary] = None
     pending_quote_text: Optional[str] = None
     quote_missing_fields: List[str] = []
+    # Uso interno (router → alertas). exclude=True: NUNCA se serializa en la respuesta HTTP al cliente.
+    intent: Optional[Dict[str, Any]] = Field(default=None, exclude=True)

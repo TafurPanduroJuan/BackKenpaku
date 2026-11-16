@@ -25,6 +25,8 @@ class ChatLogResponse(BaseModel):
     contiene_palabra_clave_producto: bool
     intencion_etiquetada: Optional[int] = None
     fuera_de_alcance: bool = False
+    intencion_modelo: Optional[int] = None
+    probabilidad_modelo: Optional[float] = None
 
     model_config = ConfigDict(from_attributes=True)
 
