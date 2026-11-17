@@ -20,9 +20,9 @@
   "sklearn": "1.9.1",
   "pandas": "3.0.6",
   "numpy": "2.5.4",
-  "filas_entrenamiento": 316,
-  "filas_prueba": 80,
-  "F1_macro_prueba": 0.9353,
-  "accuracy_prueba": 0.95,
+  "filas_entrenamiento": 317,
+  "filas_prueba": 79,
+  "F1_macro_prueba": 0.9698,
+  "accuracy_prueba": 0.9747,
   "advertencia": "Entrenado con 60 mensajes reales + simulados; resultados indicativos hasta validar con más chats reales."
 }
