@@ -9,6 +9,7 @@ from sqlalchemy import (
     Enum,
     Float,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
@@ -317,11 +318,14 @@ class OrderItem(Base):
 
 class ChatLog(Base):
     __tablename__ = "chat_logs"
+    __table_args__ = (
+        Index("ix_chat_logs_conv_timestamp", "id_conversacion", "timestamp"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     id_conversacion = Column(UUID(as_uuid=True), nullable=False, index=True)
     timestamp = Column(
-        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
     )
     rol = Column(Enum(ChatRolEnum), nullable=False)
     mensaje_texto = Column(Text, nullable=False)

@@ -91,6 +91,17 @@ kenpaku-backend/
 - Límites de longitud en dirección, observaciones y textos del reclamo.
 - **Decisión de Arquitectura**: El pedido se crea inicialmente en estado `pendiente` y **NO descuenta stock de inmediato**. El descuento de stock se ejecuta únicamente cuando el Administrador pasa el estado del pedido a `confirmado`. Si el pedido confirmado es posteriormente `cancelado`, el stock se restituye automáticamente a la base de datos.
 
+### 2.5 Retención de chats
+- **Variables de configuración**:
+  - `CHAT_LOG_RETENTION_DAYS`: Plazo de inactividad en días antes de purgar (por defecto `90`; `0` o negativo desactiva la purga automática).
+  - `CHAT_LOG_PURGE_BATCH_SIZE`: Tamaño del lote de conversaciones borradas por transacción (por defecto `1000`).
+- **Criterio de purga**: Se borra la conversación **entera** únicamente cuando su mensaje más reciente (`max(timestamp)`) supera el plazo de retención. Nunca se eliminan mensajes individuales de conversaciones activas.
+- **Endpoint**: `POST /api/cron/purge-chat-logs` (protegido con `X-Cron-Secret` o JWT de Administrador). Se ejecuta automáticamente cada mañana (08:00 UTC-5 / 13:00 UTC) mediante GitHub Actions.
+- **Modo simulación (Dry Run)**: Para verificar cuántas conversaciones y mensajes calificarían para eliminación sin borrar nada en la base de datos:
+  ```bash
+  curl -X POST "$BACKEND_URL/api/cron/purge-chat-logs?dry_run=true" -H "X-Cron-Secret: $CRON_SECRET"
+  ```
+
 ### 3. Asesor Virtual de IA (RAG)
 - **Embeddings Vectoriales (1536 dims)**: Generados a partir del texto concatenado: `nombre + categoría + acabado + medida + espesor + ficha_tecnica`. **No incluye precio ni stock** (debido a su variabilidad).
 - **Lectura en Tiempo Real**: Precio y stock se leen directamente de PostgreSQL en tiempo real al construir las tarjetas de respuesta.

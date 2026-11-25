@@ -58,3 +58,7 @@ services:
         value: "0.75"
       - key: ML_INTENT_ENABLED
         value: "true"
+      - key: CHAT_LOG_RETENTION_DAYS
+        value: "90"
+      - key: CHAT_LOG_PURGE_BATCH_SIZE
+        value: "1000"
