@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.security import decode_access_token
 from app.db.session import get_db
+from app.services.chat_retention_service import purge_old_chat_logs
 from app.services.cron_service import process_scheduled_tasks
 from app.services.fx_service import refresh_exchange_rate_and_prices
 
@@ -84,6 +85,25 @@ def run_pricing_refresh(
     if not result["success"]:
         raise HTTPException(status_code=503, detail=result["detail"])
     return result
+
+
+@router.post("/purge-chat-logs")
+def run_purge_chat_logs(
+    dry_run: bool = Query(False, description="Si es True, solo cuenta sin eliminar"),
+    retention_days: Optional[int] = Query(
+        None, ge=1, description="Días de inactividad para purgar (por defecto settings.CHAT_LOG_RETENTION_DAYS)"
+    ),
+    auth: Dict[str, str] = Depends(verify_cron_access),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """Purga conversaciones antiguas del chat cuya última actividad supere los días de retención."""
+    logger.info(
+        "[CRON CHAT PURGE] Ejecutando purga de logs de chat (autorizado por: %s, dry_run=%s, retention_days=%s)",
+        auth["authorized_by"],
+        dry_run,
+        retention_days,
+    )
+    return purge_old_chat_logs(db, retention_days=retention_days, dry_run=dry_run)
 
 
 @router.get("/status")

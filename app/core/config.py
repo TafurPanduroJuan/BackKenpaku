@@ -73,6 +73,10 @@ class Settings(BaseSettings):
     CRON_REMINDER_HOURS: int = 24
     CRON_EXPIRATION_HOURS: int = 48
 
+    # Retención y purga de logs del chat (0 = desactivado)
+    CHAT_LOG_RETENTION_DAYS: int = 90
+    CHAT_LOG_PURGE_BATCH_SIZE: int = 1000
+
     ADMIN_EMAIL: str = "admin@kenpaku.pe"
     ADMIN_PASSWORD: str = ""
 

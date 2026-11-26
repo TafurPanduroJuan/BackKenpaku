@@ -7,6 +7,12 @@ guía de etiquetado del notebook, y luego pasar el CSV a `scripts/retrain_intent
 Uso (desde la raíz del backend, con DATABASE_URL apuntando a la BD de Render):
     python scripts/export_chat_logs.py --salida ml_training/nuevos_chats_para_etiquetar.csv
 
+ADVERTENCIA:
+    Los mensajes de `chat_logs` se purgan automáticamente tras los días de retención configurados
+    (por defecto 90 días). Es necesario exportarlos con este script y etiquetarlos ANTES de que
+    venzan y sean eliminados de la base de datos. Los CSV etiquetados ya versionados en el repositorio
+    no se ven afectados por la purga.
+
 Qué hace:
   * toma solo mensajes con rol = user (el texto ya está anonimizado por el backend);
   * omite los ids y los textos que ya están en los CSV etiquetados (ver --excluir);

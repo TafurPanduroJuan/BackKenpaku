@@ -64,3 +64,28 @@ jobs:
             echo "Error: No se pudo refrescar el tipo de cambio y los precios."
             exit 1
           fi
+
+  purge-old-chat-logs:
+    name: Purgar conversaciones antiguas del chat
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 13 * * *'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Invocar endpoint protegido de purga de chat logs
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL || 'https://backkenpaku.onrender.com' }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$CRON_SECRET" ]; then
+            echo "Error: falta el secreto CRON_SECRET en GitHub."
+            exit 1
+          fi
+          HTTP_STATUS=$(curl -s -o response.json -w "%{http_code}" \
+            -X POST "$BACKEND_URL/api/cron/purge-chat-logs" \
+            -H "X-Cron-Secret: $CRON_SECRET" \
+            --max-time 120)
+          echo "Respuesta HTTP: $HTTP_STATUS"
+          cat response.json
+          if [ "$HTTP_STATUS" -ne 200 ]; then
+            echo "Error: No se pudo purgar los logs antiguos de chat."
+            exit 1
+          fi
