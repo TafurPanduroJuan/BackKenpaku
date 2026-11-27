@@ -10,7 +10,11 @@ from sqlalchemy import String, cast, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.services.notification_service import notify_order_status_changed
+from app.services.business_days import claim_fecha_limite, dias_habiles_restantes
+from app.services.notification_service import (
+    notify_claim_response,
+    notify_order_status_changed,
+)
 from app.services.telegram_service import send_telegram_alert
 from app.core.product_rules import (
     PRODUCT_FIELD_RULES,
@@ -24,6 +28,7 @@ from app.db.models import (
     CategoryMargin,
     Claim,
     ClaimEstadoEnum,
+    ClaimMessage,
     MeasurementEquivalence,
     Order,
     OrderEstadoEnum,
@@ -40,7 +45,13 @@ from app.schemas.admin import (
     ChatLogResponse,
     DashboardMetrics,
 )
-from app.schemas.claim import ClaimDetailResponse
+from app.schemas.claim import (
+    ClaimAdminDetailResponse,
+    ClaimDetailResponse,
+    ClaimMessageResponse,
+    ClaimReplyCreate,
+    ClaimStatusUpdate,
+)
 from app.schemas.order import (
     OrderDetailResponse,
     OrderEventResponse,
@@ -982,6 +993,43 @@ def get_admin_chat_logs(
     return {"items": items_resp, "total": total, "page": page, "page_size": page_size}
 
 
+def claim_to_admin_response(claim: Claim) -> ClaimDetailResponse:
+    fl = claim_fecha_limite(claim)
+    estado_val = claim.estado.value if hasattr(claim.estado, "value") else str(claim.estado)
+    dias_rest = None if estado_val == ClaimEstadoEnum.atendido.value else dias_habiles_restantes(fl)
+    count_msgs = len(claim.mensajes) if getattr(claim, "mensajes", None) is not None else 0
+
+    return ClaimDetailResponse(
+        id=claim.id,
+        codigo_seguimiento=claim.codigo_seguimiento,
+        nombre=claim.nombre,
+        documento=claim.documento,
+        telefono=claim.telefono,
+        correo=claim.correo,
+        direccion=claim.direccion,
+        tipo_bien=claim.tipo_bien,
+        monto_reclamado=claim.monto_reclamado,
+        descripcion_bien=claim.descripcion_bien,
+        tipo=claim.tipo,
+        detalle=claim.detalle,
+        pedido_consumidor=claim.pedido_consumidor,
+        fecha=claim.fecha,
+        estado=claim.estado,
+        fecha_limite=fl,
+        dias_habiles_restantes=dias_rest,
+        mensajes_count=count_msgs,
+    )
+
+
+def claim_to_admin_detail_response(claim: Claim) -> ClaimAdminDetailResponse:
+    base = claim_to_admin_response(claim)
+    msgs = [ClaimMessageResponse.model_validate(m) for m in (claim.mensajes or [])]
+    return ClaimAdminDetailResponse(
+        **base.model_dump(),
+        mensajes=msgs,
+    )
+
+
 @router.get("/claims")
 def get_admin_claims(
     page: int = Query(1, ge=1),
@@ -998,8 +1046,116 @@ def get_admin_claims(
         .limit(page_size)
         .all()
     )
-    items_resp = [ClaimDetailResponse.model_validate(item) for item in items]
+    items_resp = [claim_to_admin_response(item) for item in items]
     return {"items": items_resp, "total": total, "page": page, "page_size": page_size}
+
+
+@router.get("/claims/{claim_id}", response_model=ClaimAdminDetailResponse)
+def get_admin_claim_detail(
+    claim_id: UUID,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin_user),
+):
+    """Detalle completo de un reclamo incluyendo hilo de mensajes."""
+    claim = db.query(Claim).filter(Claim.id == claim_id).first()
+    if not claim:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Reclamo no encontrado",
+        )
+    return claim_to_admin_detail_response(claim)
+
+
+@router.post(
+    "/claims/{claim_id}/respuesta",
+    response_model=ClaimAdminDetailResponse,
+    status_code=status.HTTP_200_OK,
+)
+def reply_to_claim(
+    claim_id: UUID,
+    reply_in: ClaimReplyCreate,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin_user),
+):
+    """Registra una respuesta formal al reclamo y actualiza su estado."""
+    claim = db.query(Claim).filter(Claim.id == claim_id).first()
+    if not claim:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Reclamo no encontrado",
+        )
+
+    estado_actual = claim.estado.value if hasattr(claim.estado, "value") else str(claim.estado)
+    if estado_actual == ClaimEstadoEnum.atendido.value:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="El reclamo ya fue atendido",
+        )
+
+    msg = ClaimMessage(
+        claim_id=claim.id,
+        autor="admin",
+        canal="panel",
+        texto=reply_in.texto,
+    )
+    db.add(msg)
+
+    claim.estado = ClaimEstadoEnum(reply_in.estado)
+    if reply_in.estado == "atendido":
+        claim.fecha_atencion = datetime.now(timezone.utc)
+
+    db.commit()
+    db.refresh(claim)
+
+    if reply_in.enviar_correo:
+        background_tasks.add_task(notify_claim_response, claim, reply_in.texto)
+
+    return claim_to_admin_detail_response(claim)
+
+
+@router.patch(
+    "/claims/{claim_id}/estado",
+    response_model=ClaimAdminDetailResponse,
+    status_code=status.HTTP_200_OK,
+)
+def update_claim_status(
+    claim_id: UUID,
+    status_in: ClaimStatusUpdate,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin_user),
+):
+    """Actualiza el estado de un reclamo siguiendo el flujo legal."""
+    claim = db.query(Claim).filter(Claim.id == claim_id).first()
+    if not claim:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Reclamo no encontrado",
+        )
+
+    current_estado = claim.estado.value if hasattr(claim.estado, "value") else str(claim.estado)
+    new_estado = status_in.estado
+
+    valid_transitions = {
+        ("pendiente", "en_proceso"),
+        ("pendiente", "atendido"),
+        ("en_proceso", "atendido"),
+    }
+
+    if (current_estado, new_estado) not in valid_transitions:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Transición de estado inválida: de '{current_estado}' a '{new_estado}'.",
+        )
+
+    claim.estado = ClaimEstadoEnum(new_estado)
+    if new_estado == "atendido":
+        claim.fecha_atencion = datetime.now(timezone.utc)
+
+    db.commit()
+    db.refresh(claim)
+
+    return claim_to_admin_detail_response(claim)
 
 
 def _parse_import_form_json(value: Optional[str], expect_dict: bool = True):

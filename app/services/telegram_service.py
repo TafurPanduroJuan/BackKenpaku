@@ -5,6 +5,7 @@ import httpx
 
 from app.core.config import settings
 from app.db.models import Claim, Order
+from app.services.business_days import claim_fecha_limite, dias_habiles_restantes
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +141,9 @@ def format_new_claim_telegram(claim: Claim) -> str:
     tipo_bien_str = tipo_bien_raw.value if hasattr(tipo_bien_raw, "value") else str(tipo_bien_raw)
     detalle = getattr(claim, "detalle", getattr(claim, "detalle_reclamo", ""))
 
+    fl = claim_fecha_limite(claim)
+    fecha_limite_str = fl.strftime("%d/%m/%Y")
+
     return (
         f"⚖️ <b>¡NUEVO RECLAMO EN LIBRO VIRTUAL!</b>\n\n"
         f"<b>Código:</b> <code>{codigo}</code>\n"
@@ -147,7 +151,49 @@ def format_new_claim_telegram(claim: Claim) -> str:
         f"<b>Teléfono:</b> {telefono}\n"
         f"<b>Tipo:</b> {tipo_bien_str.title()}\n"
         f"<b>Detalle:</b> {detalle[:120]}...\n\n"
-        f"⚠️ <i>Plazo legal de atención: 15 días hábiles.</i>\n\n"
+        f"⚠️ <i>Plazo legal de atención: 15 días hábiles (hasta {fecha_limite_str}).</i>\n\n"
+        f"👉 <a href='{admin_url}'>Gestionar Reclamo</a>"
+    )
+
+
+def format_claim_customer_reply_telegram(
+    claim: Claim, texto: str, conforme: Optional[bool] = None
+) -> str:
+    """Formatea la alerta de nueva respuesta del cliente a un reclamo para Telegram."""
+    admin_url = f"{settings.FRONTEND_URL}/admin/reclamos"
+    codigo = getattr(claim, "codigo_seguimiento", getattr(claim, "codigo", "RC-XXXXXX"))
+    nombre = getattr(claim, "nombre", getattr(claim, "nombre_completo", "Cliente"))
+
+    if conforme is True:
+        conforme_line = "\n<b>Conformidad:</b> ✅ Conforme"
+    elif conforme is False:
+        conforme_line = "\n<b>Conformidad:</b> ❌ No conforme (Reabierto)"
+    else:
+        conforme_line = "\n<b>Conformidad:</b> ℹ️ No especificado"
+
+    fl = claim_fecha_limite(claim)
+    estado_val = claim.estado.value if hasattr(claim.estado, "value") else str(claim.estado)
+    if estado_val == "atendido":
+        plazo_line = "Atendido"
+    else:
+        dias = dias_habiles_restantes(fl)
+        if dias < 0:
+            plazo_line = f"⚠️ Vencido ({abs(dias)} días hábiles de retraso)"
+        elif dias == 0:
+            plazo_line = "⚠️ Vence hoy"
+        else:
+            plazo_line = f"{dias} días hábiles restantes"
+
+    texto_trunc = texto[:300]
+    texto_escaped = html.escape(texto_trunc)
+
+    return (
+        f"📩 <b>NUEVA RESPUESTA DE CLIENTE EN RECLAMO</b>\n\n"
+        f"<b>Código:</b> <code>{codigo}</code>\n"
+        f"<b>Cliente:</b> {nombre}"
+        f"{conforme_line}\n"
+        f"<b>Plazo legal:</b> {plazo_line}\n\n"
+        f"<b>Mensaje del cliente:</b>\n<i>\"{texto_escaped}\"</i>\n\n"
         f"👉 <a href='{admin_url}'>Gestionar Reclamo</a>"
     )
 

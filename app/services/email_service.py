@@ -1,3 +1,4 @@
+import html
 import logging
 import smtplib
 from email.mime.multipart import MIMEMultipart
@@ -7,6 +8,7 @@ import httpx
 
 from app.core.config import settings
 from app.db.models import Claim, Order
+from app.services.business_days import claim_fecha_limite
 
 logger = logging.getLogger(__name__)
 
@@ -322,6 +324,9 @@ def render_claim_email_html(claim: Claim) -> str:
     tipo_bien_raw = getattr(claim, "tipo_bien", "Producto")
     tipo_bien_str = tipo_bien_raw.value if hasattr(tipo_bien_raw, "value") else str(tipo_bien_raw)
     detalle = getattr(claim, "detalle", getattr(claim, "detalle_reclamo", ""))
+    fl = claim_fecha_limite(claim)
+    fecha_limite_str = fl.strftime("%d/%m/%Y")
+    seguimiento_url = f"{settings.FRONTEND_URL}/seguimiento-reclamo?codigo={codigo}"
 
     return f"""
     <!DOCTYPE html>
@@ -353,7 +358,73 @@ def render_claim_email_html(claim: Claim) -> str:
                                 <p><strong>Tipo de bien:</strong> {tipo_bien_str.title()}<br>
                                 <strong>Detalle registrado:</strong> {detalle}</p>
                                 <div style="background-color: #f8fafc; border-left: 4px solid #f59e0b; padding: 10px 14px; margin-top: 18px; font-size: 12px; color: #78350f;">
-                                    Conforme a la normativa de INDECOPI, daremos respuesta a su requerimiento en un plazo no mayor a quince (15) días hábiles al correo proporcionado.
+                                    Conforme a la normativa de INDECOPI, daremos respuesta a su requerimiento en un plazo no mayor a quince (15) días hábiles (fecha límite: {fecha_limite_str}) al correo proporcionado.
+                                </div>
+                                <div style="text-align: center; margin: 20px 0 8px 0;">
+                                    <a href="{seguimiento_url}" target="_blank" style="display: inline-block; background-color: #0284c7; color: #ffffff; text-decoration: none; padding: 12px 24px; border-radius: 8px; font-size: 13px; font-weight: bold;">
+                                        Consulte el estado de su reclamo aquí
+                                    </a>
+                                </div>
+                            </td>
+                        </tr>
+                    </table>
+                </td>
+            </tr>
+        </table>
+    </body>
+    </html>
+    """
+
+
+def render_claim_response_email_html(claim: Claim, texto: str) -> str:
+    """Genera la plantilla formal de respuesta a un reclamo en el Libro de Reclamaciones."""
+    codigo = getattr(claim, "codigo_seguimiento", getattr(claim, "codigo", "RC-2026-000001"))
+    nombre = getattr(claim, "nombre", getattr(claim, "nombre_completo", "Estimado cliente"))
+    estado_raw = getattr(claim, "estado", "en_proceso")
+    estado_str = estado_raw.value if hasattr(estado_raw, "value") else str(estado_raw)
+    estado_title = estado_str.replace("_", " ").title()
+    texto_escaped = html.escape(texto).replace("\n", "<br>")
+    seguimiento_url = f"{settings.FRONTEND_URL}/seguimiento-reclamo?codigo={codigo}"
+
+    return f"""
+    <!DOCTYPE html>
+    <html lang="es">
+    <head>
+        <meta charset="UTF-8">
+        <title>Respuesta a su Reclamo {codigo}</title>
+    </head>
+    <body style="margin: 0; padding: 0; background-color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+        <table width="100%" border="0" cellspacing="0" cellpadding="0" style="padding: 24px 12px;">
+            <tr>
+                <td align="center">
+                    <table width="100%" max-width="600" border="0" cellspacing="0" cellpadding="0" style="max-width: 600px; background-color: #ffffff; border-radius: 16px; border: 1px solid #e2e8f0; overflow: hidden;">
+                        <tr>
+                            <td style="background-color: #0f172a; padding: 20px 32px; text-align: center;">
+                                <h1 style="margin: 0; color: #ffffff; font-size: 18px; font-weight: 800;">
+                                    LIBRO DE RECLAMACIONES VIRTUAL
+                                </h1>
+                                <p style="margin: 4px 0 0 0; color: #94a3b8; font-size: 12px;">Comercial Kenpaku S.A.C. | RUC 20601234567</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 28px 32px; font-size: 13px; color: #334155; line-height: 1.6;">
+                                <p>Estimado(a) <strong>{nombre}</strong>,</p>
+                                <p>Le informamos sobre la atención a su reclamo registrado con el código oficial:</p>
+                                <div style="background-color: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 12px; text-align: center; margin: 16px 0;">
+                                    <span style="font-size: 20px; font-weight: 800; color: #0284c7;">{codigo}</span>
+                                </div>
+                                <p><strong>Estado del reclamo:</strong> <span style="font-weight: 700; color: #0369a1;">{estado_title}</span></p>
+                                <div style="background-color: #f8fafc; border-left: 4px solid #0284c7; padding: 14px 16px; margin: 18px 0; border-radius: 4px; font-size: 13px; color: #1e293b;">
+                                    <strong style="display: block; margin-bottom: 6px; color: #0f172a;">Respuesta de la administración:</strong>
+                                    {texto_escaped}
+                                </div>
+                                <div style="text-align: center; margin: 24px 0;">
+                                    <a href="{seguimiento_url}" target="_blank" style="display: inline-block; background-color: #0284c7; color: #ffffff; text-decoration: none; padding: 12px 24px; border-radius: 8px; font-size: 13px; font-weight: bold;">
+                                        Ver seguimiento del reclamo
+                                    </a>
+                                </div>
+                                <div style="background-color: #fffbeb; border-left: 4px solid #f59e0b; padding: 10px 14px; margin-top: 18px; font-size: 12px; color: #78350f;">
+                                    Si no está conforme con la respuesta, puede acudir al INDECOPI.
                                 </div>
                             </td>
                         </tr>

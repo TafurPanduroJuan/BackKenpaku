@@ -1,6 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
-from typing import Optional
+from typing import Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
@@ -68,6 +68,16 @@ class ClaimResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class ClaimMessageResponse(BaseModel):
+    id: UUID
+    autor: str
+    canal: str
+    texto: str
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class ClaimDetailResponse(BaseModel):
     id: UUID
     codigo_seguimiento: str
@@ -84,5 +94,66 @@ class ClaimDetailResponse(BaseModel):
     pedido_consumidor: str
     fecha: datetime
     estado: ClaimEstadoEnum
+    fecha_limite: Optional[datetime] = None
+    dias_habiles_restantes: Optional[int] = None
+    mensajes_count: int = 0
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ClaimAdminDetailResponse(ClaimDetailResponse):
+    mensajes: list[ClaimMessageResponse] = Field(default_factory=list)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ClaimReplyCreate(BaseModel):
+    texto: str = Field(..., min_length=10, max_length=4000)
+    estado: Literal["en_proceso", "atendido"] = "en_proceso"
+    enviar_correo: bool = True
+
+    @field_validator("texto", mode="before")
+    @classmethod
+    def strip_texto(cls, v: str) -> str:
+        if isinstance(v, str):
+            v = v.strip()
+        return v
+
+
+class ClaimStatusUpdate(BaseModel):
+    estado: Literal["en_proceso", "atendido"]
+
+
+class ClaimTrackingMessageResponse(BaseModel):
+    autor: str
+    texto: str
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ClaimTrackingPublicResponse(BaseModel):
+    codigo_seguimiento: str
+    tipo: ClaimTipoEnum
+    estado: ClaimEstadoEnum
+    fecha: datetime
+    fecha_limite: Optional[datetime] = None
+    dias_habiles_restantes: Optional[int] = None
+    descripcion_bien: str
+    mensajes: list[ClaimTrackingMessageResponse] = Field(default_factory=list)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ClaimCustomerReply(BaseModel):
+    codigo: str = Field(..., min_length=1)
+    documento: str = Field(..., min_length=1)
+    texto: str = Field(..., min_length=3, max_length=2000)
+    conforme: Optional[bool] = None
+
+    @field_validator("codigo", "documento", "texto", mode="before")
+    @classmethod
+    def strip_strings(cls, v: str) -> str:
+        if isinstance(v, str):
+            v = v.strip()
+        return v

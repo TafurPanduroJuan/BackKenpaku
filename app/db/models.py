@@ -87,6 +87,10 @@ class ClaimEstadoEnum(str, enum.Enum):
     atendido = "atendido"
 
 
+CLAIM_AUTORES = ("cliente", "admin", "sistema")
+CLAIM_CANALES = ("web", "panel", "telegram", "correo", "sistema")
+
+
 class UserRolEnum(str, enum.Enum):
     admin = "admin"
     cajero = "cajero"
@@ -365,6 +369,37 @@ class Claim(Base):
     estado = Column(
         Enum(ClaimEstadoEnum), default=ClaimEstadoEnum.pendiente, nullable=False
     )
+    fecha_limite = Column(DateTime(timezone=True), nullable=True)
+    fecha_atencion = Column(DateTime(timezone=True), nullable=True)
+
+    mensajes = relationship(
+        "ClaimMessage",
+        back_populates="claim",
+        order_by="ClaimMessage.created_at",
+        cascade="all, delete-orphan",
+    )
+
+
+class ClaimMessage(Base):
+    __tablename__ = "claim_messages"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    claim_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("claims.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    autor = Column(String(20), nullable=False)
+    canal = Column(String(20), nullable=False)
+    texto = Column(Text, nullable=False)
+    created_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    claim = relationship("Claim", back_populates="mensajes")
 
 
 class User(Base):

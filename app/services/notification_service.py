@@ -5,12 +5,14 @@ from app.core.config import settings
 from app.db.models import Claim, Order
 from app.services.email_service import (
     render_claim_email_html,
+    render_claim_response_email_html,
     render_order_email_html,
     send_email,
 )
 from app.services.telegram_service import (
     format_chat_handoff_telegram,
     format_chat_purchase_intent_telegram,
+    format_claim_customer_reply_telegram,
     format_new_claim_telegram,
     format_new_order_telegram,
     format_order_status_telegram,
@@ -111,6 +113,55 @@ def notify_claim_created(claim: Claim) -> dict:
     except Exception as e:
         logger.error(
             f"[NOTIFICATION ERROR] Error al notificar reclamo registrado {codigo}: {e}"
+        )
+        results["error"] = str(e)
+
+    return results
+
+
+def notify_claim_response(claim: Claim, texto: str) -> dict:
+    """
+    Notifica la respuesta a un reclamo:
+    Envía correo con el estado y respuesta de la administración al cliente.
+    """
+    results = {}
+    codigo = getattr(claim, "codigo_seguimiento", getattr(claim, "codigo", "RC-XXXXXX"))
+    nombre = getattr(claim, "nombre", getattr(claim, "nombre_completo", "Cliente"))
+
+    try:
+        if getattr(claim, "correo", None):
+            subject = f"Respuesta a su reclamo {codigo} - Comercial Kenpaku"
+            html = render_claim_response_email_html(claim, texto)
+            results["email"] = send_email(
+                to_email=claim.correo,
+                to_name=nombre,
+                subject=subject,
+                html_content=html,
+            )
+    except Exception as e:
+        logger.error(
+            f"[NOTIFICATION ERROR] Error al notificar respuesta de reclamo {codigo}: {e}"
+        )
+        results["error"] = str(e)
+
+    return results
+
+
+def notify_claim_customer_reply(
+    claim: Claim, texto: str, conforme: Optional[bool] = None
+) -> dict:
+    """
+    Notifica por Telegram cuando un cliente responde a su reclamo desde el portal público.
+    """
+    results = {}
+    codigo = getattr(claim, "codigo_seguimiento", getattr(claim, "codigo", "RC-XXXXXX"))
+
+    try:
+        msg = format_claim_customer_reply_telegram(claim, texto, conforme)
+        results["telegram"] = send_telegram_alert(msg)
+    except Exception as e:
+        logger.error(
+            f"[NOTIFICATION ERROR] Error al notificar respuesta de cliente en reclamo {codigo}: {e}"
         )
         results["error"] = str(e)
 
