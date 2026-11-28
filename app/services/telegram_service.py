@@ -135,11 +135,16 @@ def format_new_claim_telegram(claim: Claim) -> str:
     """Formatea la alerta de nuevo reclamo en el Libro de Reclamaciones para Telegram."""
     admin_url = f"{settings.FRONTEND_URL}/admin/reclamos"
     codigo = getattr(claim, "codigo_seguimiento", getattr(claim, "codigo", "RC-2026-000001"))
-    nombre = getattr(claim, "nombre", getattr(claim, "nombre_completo", "Cliente"))
-    telefono = getattr(claim, "telefono", "Sin teléfono")
+    nombre_raw = getattr(claim, "nombre", getattr(claim, "nombre_completo", "Cliente"))
+    nombre = html.escape(str(nombre_raw))
+    telefono_raw = getattr(claim, "telefono", "Sin teléfono")
+    telefono = html.escape(str(telefono_raw))
     tipo_bien_raw = getattr(claim, "tipo_bien", "Producto")
     tipo_bien_str = tipo_bien_raw.value if hasattr(tipo_bien_raw, "value") else str(tipo_bien_raw)
-    detalle = getattr(claim, "detalle", getattr(claim, "detalle_reclamo", ""))
+    tipo_bien = html.escape(tipo_bien_str.title())
+    detalle_raw = getattr(claim, "detalle", getattr(claim, "detalle_reclamo", ""))
+    detalle_trunc = str(detalle_raw)[:120]
+    detalle_escaped = html.escape(detalle_trunc)
 
     fl = claim_fecha_limite(claim)
     fecha_limite_str = fl.strftime("%d/%m/%Y")
@@ -149,8 +154,8 @@ def format_new_claim_telegram(claim: Claim) -> str:
         f"<b>Código:</b> <code>{codigo}</code>\n"
         f"<b>Cliente:</b> {nombre}\n"
         f"<b>Teléfono:</b> {telefono}\n"
-        f"<b>Tipo:</b> {tipo_bien_str.title()}\n"
-        f"<b>Detalle:</b> {detalle[:120]}...\n\n"
+        f"<b>Tipo:</b> {tipo_bien}\n"
+        f"<b>Detalle:</b> {detalle_escaped}...\n\n"
         f"⚠️ <i>Plazo legal de atención: 15 días hábiles (hasta {fecha_limite_str}).</i>\n\n"
         f"👉 <a href='{admin_url}'>Gestionar Reclamo</a>"
     )
@@ -162,7 +167,8 @@ def format_claim_customer_reply_telegram(
     """Formatea la alerta de nueva respuesta del cliente a un reclamo para Telegram."""
     admin_url = f"{settings.FRONTEND_URL}/admin/reclamos"
     codigo = getattr(claim, "codigo_seguimiento", getattr(claim, "codigo", "RC-XXXXXX"))
-    nombre = getattr(claim, "nombre", getattr(claim, "nombre_completo", "Cliente"))
+    nombre_raw = getattr(claim, "nombre", getattr(claim, "nombre_completo", "Cliente"))
+    nombre = html.escape(str(nombre_raw))
 
     if conforme is True:
         conforme_line = "\n<b>Conformidad:</b> ✅ Conforme"

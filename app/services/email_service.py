@@ -320,10 +320,13 @@ def render_order_email_html(
 def render_claim_email_html(claim: Claim) -> str:
     """Genera la constancia formal de registro en el Libro de Reclamaciones (Normativa Indecopi)."""
     codigo = getattr(claim, "codigo_seguimiento", getattr(claim, "codigo", "RC-2026-000001"))
-    nombre = getattr(claim, "nombre", getattr(claim, "nombre_completo", "Estimado cliente"))
+    nombre_raw = getattr(claim, "nombre", getattr(claim, "nombre_completo", "Estimado cliente"))
+    nombre = html.escape(str(nombre_raw))
     tipo_bien_raw = getattr(claim, "tipo_bien", "Producto")
     tipo_bien_str = tipo_bien_raw.value if hasattr(tipo_bien_raw, "value") else str(tipo_bien_raw)
-    detalle = getattr(claim, "detalle", getattr(claim, "detalle_reclamo", ""))
+    tipo_bien = html.escape(tipo_bien_str.title())
+    detalle_raw = getattr(claim, "detalle", getattr(claim, "detalle_reclamo", ""))
+    detalle = html.escape(str(detalle_raw)).replace("\n", "<br>")
     fl = claim_fecha_limite(claim)
     fecha_limite_str = fl.strftime("%d/%m/%Y")
     seguimiento_url = f"{settings.FRONTEND_URL}/seguimiento-reclamo?codigo={codigo}"
@@ -355,7 +358,7 @@ def render_claim_email_html(claim: Claim) -> str:
                                 <div style="background-color: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 12px; text-align: center; margin: 16px 0;">
                                     <span style="font-size: 20px; font-weight: 800; color: #0284c7;">{codigo}</span>
                                 </div>
-                                <p><strong>Tipo de bien:</strong> {tipo_bien_str.title()}<br>
+                                <p><strong>Tipo de bien:</strong> {tipo_bien}<br>
                                 <strong>Detalle registrado:</strong> {detalle}</p>
                                 <div style="background-color: #f8fafc; border-left: 4px solid #f59e0b; padding: 10px 14px; margin-top: 18px; font-size: 12px; color: #78350f;">
                                     Conforme a la normativa de INDECOPI, daremos respuesta a su requerimiento en un plazo no mayor a quince (15) días hábiles (fecha límite: {fecha_limite_str}) al correo proporcionado.
@@ -379,7 +382,8 @@ def render_claim_email_html(claim: Claim) -> str:
 def render_claim_response_email_html(claim: Claim, texto: str) -> str:
     """Genera la plantilla formal de respuesta a un reclamo en el Libro de Reclamaciones."""
     codigo = getattr(claim, "codigo_seguimiento", getattr(claim, "codigo", "RC-2026-000001"))
-    nombre = getattr(claim, "nombre", getattr(claim, "nombre_completo", "Estimado cliente"))
+    nombre_raw = getattr(claim, "nombre", getattr(claim, "nombre_completo", "Estimado cliente"))
+    nombre = html.escape(str(nombre_raw))
     estado_raw = getattr(claim, "estado", "en_proceso")
     estado_str = estado_raw.value if hasattr(estado_raw, "value") else str(estado_raw)
     estado_title = estado_str.replace("_", " ").title()
